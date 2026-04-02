@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-panel clinical-hero">
+    <div>
+        <p class="eyebrow">Doctor-facing workspace</p>
+        <h2>Clinical EEG review, organized around patient cases</h2>
+        <p>Follow each case from intake to interpretation, prioritize patients who need attention sooner, and open saved reports from one clinical workspace.</p>
+    </div>
+    <div class="hero-actions">
+        <a class="button button-primary" href="/cases/new">Create Case</a>
+        <a class="button button-secondary" href="/cases">Open Case List</a>
+    </div>
+</section>
+
+<section class="grid-cards">
+    <article class="metric-card">
+        <span class="metric-label">Completed Reviews</span>
+        <strong>{{ stats.total_analyses }}</strong>
+        <p>Patient recordings with saved clinical findings.</p>
+    </article>
+    <article class="metric-card">
+        <span class="metric-label">High-Risk Cases</span>
+        <strong>{{ stats.high_risk_cases }}</strong>
+        <p>Cases marked for urgent clinical attention.</p>
+    </article>
+    <article class="metric-card">
+        <span class="metric-label">Active Queue</span>
+        <strong>{{ stats.pending_review_cases }}</strong>
+        <p>Cases still being processed or awaiting review.</p>
+    </article>
+    <article class="metric-card">
+        <span class="metric-label">Saved Reports</span>
+        <strong>{{ stats.recent_reports }}</strong>
+        <p>Clinical summaries available for follow-up and printing.</p>
+    </article>
+</section>
+
+<section class="panel-grid">
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Recent activity</p>
+                <h2>Current Case Review</h2>
+            </div>
+            <a class="text-link" href="/cases">View all cases</a>
+        </div>
+
+        {% if recent_cases %}
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Patient</th>
+                        <th>Clinician</th>
+                        <th>Status</th>
+                        <th>Seizure Risk</th>
+                        <th>Priority</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for case in recent_cases %}
+                    <tr>
+                        <td>
+                            <strong>{{ case.patient_id }}</strong>
+                            <div class="table-subtext">{{ case.recording_date.strftime("%d %b %Y") }}</div>
+                        </td>
+                        <td>{{ case.clinician_name }}</td>
+                        <td><span class="badge badge-neutral">{{ case.status.replace('_', ' ') }}</span></td>
+                        <td>
+                            {% if case.overall_risk %}
+                            <span class="badge badge-{{ case.overall_risk|lower|replace(' ', '-') }}">{{ case.overall_risk }}</span>
+                            {% else %}
+                            <span class="badge badge-muted">Awaiting review</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ case.review_priority or "Awaiting review" }}</td>
+                        <td><a class="text-link" href="/cases/{{ case.case_id }}">Open case</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3>No cases reviewed yet</h3>
+            <p>Start by creating a patient case and attaching an EEG recording.</p>
+            <a class="button button-primary" href="/cases/new">Create Case</a>
+        </div>
+        {% endif %}
+    </article>
+
+    <article class="panel quick-actions">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Care pathway</p>
+                <h2>Clinical Steps</h2>
+            </div>
+        </div>
+
+        <a class="action-card" href="/cases/new">
+            <strong>Create Case</strong>
+            <span>Register the patient and capture the clinical context for review.</span>
+        </a>
+        <a class="action-card" href="/cases/new">
+            <strong>Upload EEG Recording</strong>
+            <span>Attach the recording that will be reviewed within the case.</span>
+        </a>
+        <a class="action-card" href="/cases/new">
+            <strong>Run Analysis</strong>
+            <span>Generate seizure risk findings, review priority, and clinical interpretation.</span>
+        </a>
+    </article>
+</section>
+
+<section class="panel-grid">
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Saved reports</p>
+                <h2>Recent Clinical Summaries</h2>
+            </div>
+            <a class="text-link" href="/reports">Open reports</a>
+        </div>
+
+        {% if recent_reports %}
+        <div class="table-wrap">
+            <table class="data-table compact-table">
+                <thead>
+                    <tr>
+                        <th>Report</th>
+                        <th>Patient</th>
+                        <th>Created</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for report in recent_reports %}
+                    <tr>
+                        <td><a class="text-link" href="{{ report.report_url }}">{{ report.report_title }}</a></td>
+                        <td>{{ report.patient_id }}</td>
+                        <td>{{ report.generated_at.strftime("%d %b %Y %H:%M") }}</td>
+                        <td><span class="badge badge-success">{{ report.report_status }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state subtle-empty">
+            <h3>No reports available</h3>
+            <p>Completed case reviews will appear here once the report is saved.</p>
+        </div>
+        {% endif %}
+    </article>
+
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Review focus</p>
+                <h2>What clinicians see</h2>
+            </div>
+        </div>
+        <ul class="stat-list">
+            <li>
+                <span>Estimated seizure risk</span>
+                <strong>Clear patient-level summary</strong>
+            </li>
+            <li>
+                <span>Review priority</span>
+                <strong>Routine, recommended, or urgent</strong>
+            </li>
+            <li>
+                <span>Risk timeline</span>
+                <strong>Visual review across the recording</strong>
+            </li>
+            <li>
+                <span>High-risk intervals</span>
+                <strong>Focused periods for review</strong>
+            </li>
+        </ul>
+    </article>
+</section>
+{% endblock %}

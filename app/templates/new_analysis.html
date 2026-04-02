@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="workflow-banner">
+    <div class="workflow-step is-active">
+        <span>1</span>
+        <div>
+            <strong>Create Case</strong>
+            <small>Enter patient and clinician details</small>
+        </div>
+    </div>
+    <div class="workflow-step is-active">
+        <span>2</span>
+        <div>
+            <strong>Upload EEG Recording</strong>
+            <small>Attach the clinical recording</small>
+        </div>
+    </div>
+    <div class="workflow-step is-active">
+        <span>3</span>
+        <div>
+            <strong>Run Analysis</strong>
+            <small>Generate the clinical review</small>
+        </div>
+    </div>
+</section>
+
+<section class="panel-grid panel-grid-two">
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">New case</p>
+                <h2>Create a patient case and begin review</h2>
+            </div>
+        </div>
+
+        <form class="stack-form" method="post" action="/cases/new" enctype="multipart/form-data">
+            <label>
+                <span>Patient ID</span>
+                <input type="text" name="patient_id" placeholder="Enter patient identifier" required>
+            </label>
+            <label>
+                <span>Clinician Name</span>
+                <input type="text" name="clinician_name" placeholder="Enter responsible clinician" required>
+            </label>
+            <label>
+                <span>Recording Date</span>
+                <input type="date" name="recording_date" value="{{ today }}" required>
+            </label>
+            <label>
+                <span>Clinical Notes</span>
+                <textarea name="notes" rows="5" placeholder="Optional indication, patient background, or review notes"></textarea>
+            </label>
+            <label class="upload-dropzone">
+                <span>EEG Recording</span>
+                <input type="file" name="eeg_file" accept=".edf" required data-file-input>
+                <strong class="upload-title">Select an EDF recording</strong>
+                <small class="upload-help">The recording will be attached to the case and reviewed to produce a clinical summary, review priority, and interpretation.</small>
+                <span class="upload-file-name" data-file-name>No file selected</span>
+            </label>
+            <button type="submit" class="button button-primary button-block" data-loading-label="Preparing Clinical Review...">Run Analysis</button>
+        </form>
+    </article>
+
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">What to expect</p>
+                <h2>Clinical review flow</h2>
+            </div>
+        </div>
+
+        <ul class="stat-list">
+            <li>
+                <span>Create Case</span>
+                <strong>Save patient and clinician details</strong>
+            </li>
+            <li>
+                <span>Upload EEG Recording</span>
+                <strong>Attach the recording for review</strong>
+            </li>
+            <li>
+                <span>Run Analysis</span>
+                <strong>Generate the case summary</strong>
+            </li>
+            <li>
+                <span>Open Results</span>
+                <strong>Review timeline, intervals, and interpretation</strong>
+            </li>
+        </ul>
+
+        <div class="info-card">
+            <h3>Clinical outputs</h3>
+            <p>Each completed review presents estimated seizure risk, review priority, flagged segments, high-risk intervals, and a written interpretation for the case record.</p>
+        </div>
+
+        <div class="info-card info-card-calm">
+            <h3>Clinical notice</h3>
+            <p>{{ research_disclaimer }}</p>
+        </div>
+    </article>
+</section>
+{% endblock %}

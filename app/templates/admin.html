@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel-grid">
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">System status</p>
+                <h2>Clinical service overview</h2>
+            </div>
+        </div>
+
+        <div class="admin-grid">
+            <div class="admin-item">
+                <span>Service status</span>
+                <strong>{{ admin_settings.backend_status }}</strong>
+            </div>
+            <div class="admin-item">
+                <span>Clinical review package</span>
+                <strong>{{ admin_settings.model_version }}</strong>
+            </div>
+            <div class="admin-item">
+                <span>Processing environment</span>
+                <strong>{{ admin_settings.model_device }}</strong>
+            </div>
+            <div class="admin-item">
+                <span>Recording rate</span>
+                <strong>{{ admin_settings.target_sample_rate_hz }} Hz</strong>
+            </div>
+        </div>
+    </article>
+
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Service package</p>
+                <h2>Update clinical review package</h2>
+            </div>
+        </div>
+
+        <form class="stack-form" method="post" action="/admin/checkpoint">
+            <label>
+                <span>Package path</span>
+                <input type="text" name="checkpoint_path" value="{{ admin_settings.checkpoint_path or '' }}" placeholder="D:\path\to\clinical-package.pt" required>
+            </label>
+            <button type="submit" class="button button-primary">Update Package</button>
+        </form>
+    </article>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Clinical support settings</p>
+            <h2>Review configuration summary</h2>
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table class="data-table compact-table">
+            <tbody>
+                <tr>
+                    <th>Recording pace</th>
+                    <td>{{ admin_settings.target_sample_rate_hz }} Hz</td>
+                </tr>
+                <tr>
+                    <th>Review pattern</th>
+                    <td>Consistent clinical review support</td>
+                </tr>
+                <tr>
+                    <th>Minimum mapped channels</th>
+                    <td>{{ admin_settings.minimum_mapped_channels }}</td>
+                </tr>
+                <tr>
+                    <th>Maximum zero-filled channels</th>
+                    <td>{{ admin_settings.max_zero_fill_channels }}</td>
+                </tr>
+                <tr>
+                    <th>Zero-fill policy</th>
+                    <td>{% if admin_settings.zero_fill_allowed %}Allowed within validation rules{% else %}Disabled{% endif %}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

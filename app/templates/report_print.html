@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Report | {{ platform_name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+    <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</head>
+<body class="report-page">
+    <main class="report-sheet">
+        <header class="report-header">
+            <div>
+                <p class="eyebrow">{{ platform_name }}</p>
+                <h1>{{ report.report_title }}</h1>
+                <p>Doctor-facing summary of EEG seizure risk findings for this patient case.</p>
+            </div>
+            <div class="report-actions no-print">
+                <button type="button" class="button button-secondary" data-print-report>Print</button>
+                <a href="/reports/{{ report.report_id }}/download" class="button button-secondary">Download</a>
+                <a href="/cases/{{ case_detail.case_id }}" class="button button-primary">Back to Case</a>
+            </div>
+        </header>
+
+        <section class="report-section report-grid">
+            <div>
+                <span class="meta-label">Patient ID</span>
+                <strong>{{ case_detail.patient_id }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Clinician</span>
+                <strong>{{ case_detail.clinician_name }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Recording Date</span>
+                <strong>{{ case_detail.recording_date.strftime("%d %b %Y") }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Review Date</span>
+                <strong>{{ case_detail.analysis.created_at.strftime("%d %b %Y %H:%M") if case_detail.analysis else "Pending" }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Recording</span>
+                <strong>{{ case_detail.recording.file_name if case_detail.recording else "Not available" }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Duration</span>
+                <strong>{{ recording_duration_label }}</strong>
+            </div>
+        </section>
+
+        <section class="report-section report-metrics">
+            <article class="metric-card compact-metric">
+                <span class="metric-label">Estimated Seizure Risk</span>
+                <strong>{{ "%.0f"|format((case_detail.analysis.estimated_seizure_risk if case_detail.analysis else 0) * 100) }}%</strong>
+            </article>
+            <article class="metric-card compact-metric">
+                <span class="metric-label">Review Priority</span>
+                <strong>{{ case_detail.analysis.review_priority if case_detail.analysis else "Pending" }}</strong>
+            </article>
+            <article class="metric-card compact-metric">
+                <span class="metric-label">Flagged Segments</span>
+                <strong>{{ case_detail.analysis.flagged_segments_count if case_detail.analysis else 0 }}</strong>
+            </article>
+        </section>
+
+        <section class="report-section">
+            <h2>Clinical Summary</h2>
+            <p>{{ case_detail.analysis.clinical_summary if case_detail.analysis else "No summary available." }}</p>
+        </section>
+
+        <section class="report-section">
+            <h2>Clinical Interpretation</h2>
+            <p>{{ case_detail.analysis.interpretation if case_detail.analysis else "No interpretation available." }}</p>
+        </section>
+
+        <section class="report-section">
+            <h2>High-Risk Intervals</h2>
+            <div class="table-wrap">
+                <table class="data-table compact-table">
+                    <thead>
+                        <tr>
+                            <th>Interval</th>
+                            <th>Start</th>
+                            <th>End</th>
+                            <th>Mean Risk</th>
+                            <th>Review Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for interval in case_detail.high_risk_intervals %}
+                        <tr>
+                            <td>{{ interval.interval_index }}</td>
+                            <td>{{ "%.2f"|format(interval.start_sec) }}s</td>
+                            <td>{{ "%.2f"|format(interval.end_sec) }}s</td>
+                            <td>{{ "%.0f"|format(interval.mean_risk * 100) }}%</td>
+                            <td>{{ interval.review_status }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5">No high-risk intervals were identified for this case.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <footer class="report-footer">
+            <p>{{ research_disclaimer }}</p>
+        </footer>
+    </main>
+</body>
+</html>

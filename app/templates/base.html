@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }} | {{ platform_name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <a class="brand" href="/dashboard" aria-label="Open dashboard">
+                <span class="brand-mark">NV</span>
+                <span class="brand-copy">
+                    <strong>{{ platform_name }}</strong>
+                    <small>Doctor-facing clinical review platform</small>
+                </span>
+            </a>
+
+            <nav class="sidebar-nav" aria-label="Primary">
+                <a href="/dashboard" class="nav-link{% if active_page == 'dashboard' %} is-active{% endif %}">
+                    <span class="nav-link-title">Dashboard</span>
+                    <small>Clinical overview</small>
+                </a>
+                <a href="/cases" class="nav-link{% if active_page == 'cases' %} is-active{% endif %}">
+                    <span class="nav-link-title">Cases</span>
+                    <small>Patient case list</small>
+                </a>
+                <a href="/cases/new" class="nav-link{% if active_page == 'new_analysis' %} is-active{% endif %}">
+                    <span class="nav-link-title">New Analysis</span>
+                    <small>Create and review</small>
+                </a>
+                <a href="/reports" class="nav-link{% if active_page == 'reports' %} is-active{% endif %}">
+                    <span class="nav-link-title">Reports</span>
+                    <small>Saved summaries</small>
+                </a>
+            </nav>
+
+            <section class="sidebar-panel">
+                <p class="panel-label">Clinical workflow</p>
+                <ol class="sidebar-steps">
+                    <li>Create Case</li>
+                    <li>Upload EEG Recording</li>
+                    <li>Run Analysis</li>
+                </ol>
+            </section>
+
+            <section class="sidebar-panel sidebar-panel-warn">
+                <p class="panel-label">Clinical notice</p>
+                <p>{{ research_disclaimer }}</p>
+            </section>
+        </aside>
+
+        <div class="app-main">
+            <header class="topbar">
+                <div class="topbar-copy">
+                    <p class="eyebrow">{{ app_title }}</p>
+                    <h1>{{ page_title }}</h1>
+                    <p class="page-subtitle">{{ page_subtitle }}</p>
+                </div>
+                <div class="topbar-actions">
+                    <a class="button button-secondary" href="/cases">Open Cases</a>
+                    <a class="button button-primary" href="/cases/new">Start New Analysis</a>
+                </div>
+            </header>
+
+            <main class="content">
+                {% if notice %}
+                <div class="alert alert-{{ tone }}">
+                    <span>{{ notice }}</span>
+                </div>
+                {% endif %}
+
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Clinical documentation</p>
+            <h2>Saved reports</h2>
+        </div>
+    </div>
+
+    {% if reports %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Report</th>
+                    <th>Patient</th>
+                    <th>Clinician</th>
+                    <th>Created</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in reports %}
+                <tr>
+                    <td>{{ report.report_title }}</td>
+                    <td>{{ report.patient_id }}</td>
+                    <td>{{ report.clinician_name }}</td>
+                    <td>{{ report.generated_at.strftime("%d %b %Y %H:%M") }}</td>
+                    <td><span class="badge badge-success">{{ report.report_status }}</span></td>
+                    <td class="table-actions">
+                        <a class="text-link" href="{{ report.report_url }}">View</a>
+                        <a class="text-link" href="/reports/{{ report.report_id }}/download">Download</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <h3>No saved reports</h3>
+        <p>Reports appear here after a case review has been completed and saved.</p>
+        <a class="button button-primary" href="/cases/new">Start New Analysis</a>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}

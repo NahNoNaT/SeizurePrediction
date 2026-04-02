@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% set summary = analysis_state.clinical_summary %}
+{% set risk_badge = summary.risk_level if summary.risk_level in ["low", "moderate", "high"] else "muted" %}
+<section class="detail-hero">
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Patient case</p>
+                <h2>Case {{ case_detail.patient_id }}</h2>
+            </div>
+            <div class="hero-actions">
+                {% if case_detail.report %}
+                <a class="button button-secondary" href="{{ case_detail.report.report_url }}">View Report</a>
+                <a class="button button-primary" href="/reports/{{ case_detail.report.report_id }}/download">Download Report</a>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="meta-grid">
+            <div>
+                <span class="meta-label">Patient ID</span>
+                <strong>{{ case_detail.patient_id }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Clinician</span>
+                <strong>{{ case_detail.clinician_name }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Recording Date</span>
+                <strong>{{ case_detail.recording_date.strftime("%d %b %Y") }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Case Status</span>
+                <strong>{{ case_detail.status.replace('_', ' ') }}</strong>
+            </div>
+        </div>
+
+        {% if case_detail.notes %}
+        <div class="note-block">
+            <span class="meta-label">Clinical Notes</span>
+            <p>{{ case_detail.notes }}</p>
+        </div>
+        {% endif %}
+    </article>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Clinical summary</p>
+            <h2>Summary for review</h2>
+        </div>
+    </div>
+
+    <div class="summary-layout">
+        <div class="summary-callout summary-callout-strong">
+            <p>{{ summary.summary_text }}</p>
+        </div>
+        <div class="summary-metrics">
+            <article class="metric-card compact-metric">
+                <span class="metric-label">Estimated Seizure Risk</span>
+                <strong>{{ summary.risk_score }}%</strong>
+                <p>
+                    <span class="badge badge-{{ risk_badge }}">{{ summary.risk_level.replace('_', ' ')|title }}</span>
+                </p>
+            </article>
+            <article class="metric-card compact-metric">
+                <span class="metric-label">Review Priority</span>
+                <strong>{{ summary.priority.replace('_', ' ')|title }}</strong>
+                <p>Recommended urgency for this patient review.</p>
+            </article>
+            <article class="metric-card compact-metric">
+                <span class="metric-label">Flagged Segments</span>
+                <strong>{{ summary.flagged_segments }}</strong>
+                <p>Recording segments marked for closer review.</p>
+            </article>
+        </div>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Waveform review</p>
+            <h2>EEG recording preview</h2>
+        </div>
+    </div>
+    {% if case_detail.recording %}
+    <p class="chart-note">Inspect a limited EEG window directly from the uploaded EDF. The preview is available whether or not AI analysis has completed.</p>
+    <div
+        class="waveform-viewer"
+        data-waveform-viewer
+        data-recording-id="{{ case_detail.recording.recording_id }}"
+        data-default-duration="30"
+    >
+        <div class="waveform-controls filter-form">
+            <label>
+                <span>Start Time (sec)</span>
+                <input type="number" min="0" step="1" value="0" data-waveform-start>
+            </label>
+            <label>
+                <span>Duration (sec)</span>
+                <select data-waveform-duration>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="30" selected>30</option>
+                    <option value="60">60</option>
+                </select>
+            </label>
+            <label class="waveform-channel-filter">
+                <span>Channels</span>
+                <input
+                    type="text"
+                    placeholder="Leave blank for default channels"
+                    data-waveform-channels
+                >
+            </label>
+            <div class="waveform-actions">
+                <button type="button" class="button button-primary" data-waveform-load>Load Preview</button>
+            </div>
+        </div>
+        <div class="waveform-meta">
+            <span class="waveform-status" data-waveform-status>Loading EEG preview...</span>
+            <span class="waveform-channel-summary" data-waveform-channel-summary></span>
+        </div>
+        <div class="waveform-plot chart-canvas" data-waveform-plot aria-label="EEG waveform preview"></div>
+        <div class="message-list" data-waveform-messages hidden></div>
+    </div>
+    {% else %}
+    <div class="empty-state subtle-empty">
+        <h3>No EEG recording available</h3>
+        <p>The waveform viewer will appear once an EDF recording has been uploaded for this case.</p>
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Risk timeline</p>
+            <h2>Seizure risk across the recording</h2>
+        </div>
+    </div>
+    <p class="chart-note">Use the timeline to see where seizure risk rises during the recording. Highlighted sections show periods that should receive closer review.</p>
+    {% if chart_points %}
+    <canvas
+        id="riskTimelineChart"
+        class="chart-canvas"
+        data-chart-label="Estimated seizure risk"
+        data-chart-points='{{ chart_points|tojson }}'
+    ></canvas>
+    {% elif analysis_state.status == "pending" %}
+    <div class="empty-state subtle-empty">
+        <h3>Timeline pending</h3>
+        <p>Risk timeline data will appear here once the EEG analysis is complete.</p>
+    </div>
+    {% else %}
+    <div class="empty-state subtle-empty">
+        <h3>Timeline unavailable</h3>
+        <p>{{ analysis_state.error or "Risk timeline data is not available because the analysis could not be completed." }}</p>
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">High-risk intervals</p>
+            <h2>Focused periods for review</h2>
+        </div>
+    </div>
+    {% if case_detail.high_risk_intervals %}
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Interval</th>
+                    <th>Start Time</th>
+                    <th>End Time</th>
+                    <th>Mean Risk</th>
+                    <th>Review Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for interval in case_detail.high_risk_intervals %}
+                <tr>
+                    <td>{{ interval.interval_index }}</td>
+                    <td>{{ "%.2f"|format(interval.start_sec) }}s</td>
+                    <td>{{ "%.2f"|format(interval.end_sec) }}s</td>
+                    <td>{{ "%.0f"|format(interval.mean_risk * 100) }}%</td>
+                    <td>{{ interval.review_status }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state subtle-empty">
+        {% if analysis_state.status == "pending" %}
+        <h3>Intervals pending</h3>
+        <p>High-risk intervals will appear here once the analysis is complete.</p>
+        {% elif analysis_state.status == "failed" %}
+        <h3>Intervals unavailable</h3>
+        <p>High-risk intervals could not be generated because the analysis failed.</p>
+        {% else %}
+        <h3>No high-risk intervals identified</h3>
+        <p>No sustained periods of elevated seizure risk were grouped in this recording.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel-grid">
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Clinical interpretation</h2>
+            </div>
+        </div>
+        <div class="summary-callout">
+            <p>{{ summary.recommendation }}</p>
+            {% if analysis_state.status == "failed" and analysis_state.error %}
+            <p class="top-gap"><strong>Analysis status:</strong> {{ analysis_state.error }}</p>
+            {% endif %}
+        </div>
+    </article>
+
+    <article class="panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Case actions</p>
+                <h2>Review actions</h2>
+            </div>
+        </div>
+        <ul class="stat-list">
+            <li>
+                <span>Recording</span>
+                <strong>{{ case_detail.recording.file_name if case_detail.recording else "Not available" }}</strong>
+            </li>
+            <li>
+                <span>Recording duration</span>
+                <strong>{{ recording_duration_label }}</strong>
+            </li>
+            <li>
+                <span>Report status</span>
+                <strong>{% if case_detail.report %}Available{% elif analysis_state.status == "failed" %}Unavailable{% else %}Pending{% endif %}</strong>
+            </li>
+        </ul>
+        <div class="stack-actions top-gap">
+            {% if case_detail.report %}
+            <a class="button button-primary" href="{{ case_detail.report.report_url }}">Open Report</a>
+            <a class="button button-secondary" href="/reports/{{ case_detail.report.report_id }}/download">Download Report</a>
+            {% endif %}
+            <form method="post" action="/cases/{{ case_detail.case_id }}/delete">
+                <button type="submit" class="button button-danger button-block" data-confirm="Delete this case, its review results, and the saved report?">Delete Case</button>
+            </form>
+        </div>
+    </article>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Detailed review</p>
+            <h2>Flagged segment list</h2>
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Segment</th>
+                    <th>Time Range</th>
+                    <th>Risk Score</th>
+                    <th>Risk Level</th>
+                    <th>Flagged</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for segment in analysis_state.segments %}
+                <tr class="{% if segment.is_flagged %}row-highlight{% endif %}">
+                    <td>{{ segment.segment_index + 1 }}</td>
+                    <td>{{ "%.2f"|format(segment.start_sec) }}s - {{ "%.2f"|format(segment.end_sec) }}s</td>
+                    <td>{{ "%.0f"|format(segment.risk_score * 100) }}%</td>
+                    <td>{{ segment.risk_level.replace('_', ' ')|title }}</td>
+                    <td>{% if segment.is_flagged %}Yes{% else %}No{% endif %}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5">
+                        {% if analysis_state.status == "pending" %}
+                        No flagged segment findings are available until the analysis completes.
+                        {% elif analysis_state.status == "failed" %}
+                        No flagged segment findings are available because the analysis failed.
+                        {% else %}
+                        No flagged segments were identified in this recording.
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="disclaimer-strip">
+    <p>{{ research_disclaimer }}</p>
+</section>
+{% endblock %}

@@ -16,6 +16,8 @@ from app.schemas import (
     AnalysisTimelineEntry,
     CaseDetail,
     ClinicalSummaryState,
+    ModelComparison,
+    ModelSlotStatus,
     RecordingOverview,
     RecordingPreviewResponse,
     ReportSummary,
@@ -37,20 +39,125 @@ class FakeInferenceService:
 
     def load_checkpoint(self, checkpoint_path: str | None = None) -> None:
         runtime_config.checkpoint_path = checkpoint_path
+        runtime_config.checkpoint_paths = (checkpoint_path,) if checkpoint_path else ()
         runtime_config.inference_status = self.status
+
+    def load_models(self, checkpoint_path: str | None = None) -> None:
+        if checkpoint_path is not None:
+            runtime_config.checkpoint_path = checkpoint_path
+            runtime_config.checkpoint_paths = (checkpoint_path,)
+        runtime_config.inference_status = self.status
+
+    def model_slot_statuses(self) -> list[ModelSlotStatus]:
+        paths = list(runtime_config.configured_checkpoint_paths())
+        return [
+            ModelSlotStatus(
+                model_key=f"model_{index}",
+                model_label=f"Model {index}",
+                checkpoint_path=path,
+                status="READY",
+                backend_status=self.status,
+                model_version=runtime_config.default_model_version,
+                detail=None,
+            )
+            for index, path in enumerate(paths or ["models/checkpoints/model-1.pt"], start=1)
+        ]
 
 
 class FakeWorkflowService:
-    def __init__(self, project_root: Path, *, fail_analysis: bool = False, failure_code: str = "model_unavailable"):
+    def __init__(
+        self,
+        project_root: Path,
+        *,
+        fail_analysis: bool = False,
+        failure_code: str = "model_unavailable",
+        recording_mode: str = "referential",
+    ):
         self.project_root = project_root
         self.fail_analysis = fail_analysis
         self.failure_code = failure_code
+        self.recording_mode = recording_mode
         self.temporal_service = TemporalAnalysisService(runtime_config)
         self.clinical_service = ClinicalDecisionService(runtime_config)
         self.reports_dir = project_root / "reports"
         self.reports_dir.mkdir(parents=True, exist_ok=True)
 
-    def inspect_recording(self, file_path: Path, *, clinician_mode: bool = True) -> EEGIntakeResult:
+    def inspect_recording(
+        self,
+        file_path: Path,
+        *,
+        clinician_mode: bool = True,
+        enforce_validation: bool = True,
+    ) -> EEGIntakeResult:
+        if self.recording_mode == "blocked_bipolar":
+            bipolar_channels = ["Fp1-F7", "F7-T3", "Fp2-F8", "F8-T4"]
+            traces = {
+                channel: ChannelTrace(
+                    source_name=channel,
+                    canonical_name=channel,
+                    sampling_rate=float(runtime_config.target_sampling_rate_hz),
+                    signal=np.ones(runtime_config.default_window_size, dtype=np.float32),
+                )
+                for channel in bipolar_channels
+            }
+            return EEGIntakeResult(
+                file_type=".edf",
+                duration_sec=60.0,
+                channel_count=len(bipolar_channels),
+                channel_names=bipolar_channels,
+                input_montage_type="bipolar",
+                conversion_status="blocked",
+                conversion_messages=["Bipolar channel pairs were recognized, but posterior coverage was insufficient for montage conversion."],
+                traces_by_channel={
+                    "Fp1": traces["Fp1-F7"],
+                    "F7": traces["F7-T3"],
+                    "Fp2": traces["Fp2-F8"],
+                    "F8": traces["F8-T4"],
+                },
+                mapped_channels=["Fp1", "F7", "Fp2", "F8"],
+                derived_channels=["Fp1", "F7", "Fp2", "F8"],
+                approximated_channels=[],
+                missing_channels=[channel for channel in runtime_config.required_channel_order if channel not in {"Fp1", "F7", "Fp2", "F8"}],
+                validation_status="BLOCKED",
+                zero_fill_allowed=False,
+                validation_messages=["Montage conversion was not sufficient to build a model-ready EEG input."],
+            )
+        if self.recording_mode == "converted_bipolar":
+            bipolar_channels = ["Fp1-F7", "F7-T3", "T3-T5", "T5-O1", "Fp2-F8", "F8-T4", "T4-T6", "T6-O2"]
+            traces = {
+                channel: ChannelTrace(
+                    source_name=channel,
+                    canonical_name=channel,
+                    sampling_rate=float(runtime_config.target_sampling_rate_hz),
+                    signal=np.ones(runtime_config.default_window_size, dtype=np.float32),
+                )
+                for channel in bipolar_channels
+            }
+            return EEGIntakeResult(
+                file_type=".edf",
+                duration_sec=60.0,
+                channel_count=len(bipolar_channels),
+                channel_names=bipolar_channels,
+                input_montage_type="bipolar",
+                conversion_status="converted",
+                conversion_messages=["The EDF used bipolar channel labels and was converted heuristically into the fixed model input montage."],
+                traces_by_channel={
+                    channel: ChannelTrace(
+                        source_name=f"derived:{channel}",
+                        canonical_name=channel,
+                        sampling_rate=float(runtime_config.target_sampling_rate_hz),
+                        signal=np.ones(runtime_config.default_window_size, dtype=np.float32),
+                    )
+                    for channel in runtime_config.required_channel_order
+                },
+                mapped_channels=list(runtime_config.required_channel_order),
+                derived_channels=["Fp1", "F7", "T3", "T5", "O1", "Fp2", "F8", "T4", "T6"],
+                approximated_channels=["F3", "C3", "P3", "F4", "C4", "P4", "Fz", "Cz", "Pz"],
+                missing_channels=[],
+                validation_status="VALIDATED",
+                zero_fill_allowed=True,
+                validation_messages=["Recording validated for analysis after bipolar montage conversion."],
+            )
         traces = {
             channel: ChannelTrace(
                 source_name=channel,
@@ -65,8 +172,13 @@ class FakeWorkflowService:
             duration_sec=60.0,
             channel_count=len(runtime_config.required_channel_order),
             channel_names=list(runtime_config.required_channel_order),
+            input_montage_type="referential",
+            conversion_status="direct",
+            conversion_messages=["Referential scalp EEG channels were mapped directly to the model input montage."],
             traces_by_channel=traces,
             mapped_channels=list(runtime_config.required_channel_order),
+            derived_channels=[],
+            approximated_channels=[],
             missing_channels=[],
             validation_status="VALIDATED",
             zero_fill_allowed=True,
@@ -93,7 +205,12 @@ class FakeWorkflowService:
             sampling_rate=float(runtime_config.target_sampling_rate_hz),
             channel_count=intake.channel_count,
             channel_names=intake.channel_names,
+            input_montage_type=intake.input_montage_type,
+            conversion_status=intake.conversion_status,
+            conversion_messages=intake.conversion_messages,
             mapped_channels=intake.mapped_channels,
+            derived_channels=intake.derived_channels,
+            approximated_channels=intake.approximated_channels,
             missing_channels=intake.missing_channels,
             mapped_channel_count=len(intake.mapped_channels),
             validation_status=intake.validation_status,
@@ -102,7 +219,7 @@ class FakeWorkflowService:
         )
 
     def run_recording_analysis(self, *, case_id: str, recording: RecordingOverview) -> WorkflowRunResult:
-        intake = self.inspect_recording(Path(recording.file_path), clinician_mode=False)
+        intake = self.inspect_recording(Path(recording.file_path), clinician_mode=False, enforce_validation=True)
         if self.fail_analysis:
             assessment = self.clinical_service.build_failed_assessment(
                 case_id=case_id,
@@ -118,6 +235,7 @@ class FakeWorkflowService:
                 inference=None,
                 temporal=None,
                 assessment=assessment,
+                model_comparisons=[],
                 trace_json={"backend_status": self.failure_code, "failure_code": self.failure_code},
             )
 
@@ -130,6 +248,30 @@ class FakeWorkflowService:
             model_version=runtime_config.default_model_version,
             temporal_result=temporal,
         )
+        model_comparisons = [
+            ModelComparison(
+                model_run_id=str(uuid4()),
+                analysis_id="",
+                model_key=f"model_{index}",
+                model_label=f"Model {index}",
+                model_version="raw-window-cnn-seqbigru-v1",
+                checkpoint_path=f"models/checkpoints/model-{index}.pt",
+                status="COMPLETED",
+                backend_status="model_ready",
+                overall_risk="Moderate" if index < 4 else "High",
+                review_priority="Recommended" if index < 4 else "Urgent",
+                estimated_seizure_risk=0.56 + (index * 0.05),
+                max_risk_score=0.7 + (index * 0.04),
+                mean_risk_score=0.48 + (index * 0.03),
+                flagged_segments_count=index,
+                high_risk_intervals_count=1,
+                confidence_score=0.62 + (index * 0.07),
+                confidence_label="High" if index >= 3 else "Moderate",
+                agreement_score=0.74 + (index * 0.04),
+                inference_time_seconds=0.01 * index,
+            )
+            for index in range(1, 5)
+        ]
         return WorkflowRunResult(
             recording=recording,
             intake=intake,
@@ -139,9 +281,13 @@ class FakeWorkflowService:
                 risk_scores=risk_scores,
                 inference_time_seconds=0.02,
                 backend_status="model_ready",
+                model_results=[],
+                successful_model_count=4,
+                configured_model_count=4,
             ),
             temporal=temporal,
             assessment=assessment,
+            model_comparisons=model_comparisons,
             trace_json={"backend_status": "model_ready"},
         )
 
@@ -162,6 +308,22 @@ class FakeWorkflowService:
         )
 
     def build_case_analysis_state(self, case_detail: CaseDetail) -> AnalysisStateResponse:
+        if case_detail.recording is not None and case_detail.recording.validation_status == "BLOCKED":
+            return AnalysisStateResponse(
+                status="failed",
+                error=" ".join(case_detail.recording.validation_messages),
+                clinical_summary=ClinicalSummaryState(
+                    risk_score=0,
+                    risk_level="failed",
+                    priority="analysis_failed",
+                    flagged_segments=0,
+                    summary_text="Analysis was blocked because the uploaded EEG montage could not be converted into a model-ready input with sufficient coverage.",
+                    recommendation="Review the montage/conversion notes and confirm the EDF channel layout before retrying analysis.",
+                ),
+                model_comparisons=case_detail.model_comparisons,
+                timeline=[],
+                segments=[],
+            )
         if case_detail.recording is None or case_detail.analysis is None:
             return AnalysisStateResponse(
                 status="pending",
@@ -174,6 +336,7 @@ class FakeWorkflowService:
                     summary_text="Clinical findings will appear here once the analysis is complete.",
                     recommendation="Awaiting analysis.",
                 ),
+                model_comparisons=case_detail.model_comparisons,
                 timeline=[],
                 segments=[],
             )
@@ -227,6 +390,7 @@ class FakeWorkflowService:
                 summary_text=case_detail.analysis.clinical_summary or "Clinical findings are available for review.",
                 recommendation=case_detail.analysis.recommendation or "Review the elevated-risk windows alongside the clinical context.",
             ),
+            model_comparisons=case_detail.model_comparisons,
             timeline=timeline,
             segments=segments,
         )
@@ -273,10 +437,21 @@ class FakeWorkflowService:
         )
 
 
-def build_test_app(tmp_path: Path, *, fail_analysis: bool = False, failure_code: str = "model_unavailable"):
+def build_test_app(
+    tmp_path: Path,
+    *,
+    fail_analysis: bool = False,
+    failure_code: str = "model_unavailable",
+    recording_mode: str = "referential",
+):
     case_store = ClinicalCaseStore(tmp_path / "clinical_cases.db")
     inference_service = FakeInferenceService(status="model_unavailable" if fail_analysis else "model_ready")
-    workflow_service = FakeWorkflowService(tmp_path, fail_analysis=fail_analysis, failure_code=failure_code)
+    workflow_service = FakeWorkflowService(
+        tmp_path,
+        fail_analysis=fail_analysis,
+        failure_code=failure_code,
+        recording_mode=recording_mode,
+    )
     app = create_app(
         case_store=case_store,
         inference_service=inference_service,  # type: ignore[arg-type]
@@ -298,6 +473,20 @@ def client(tmp_path: Path):
 @pytest.fixture
 def failing_client(tmp_path: Path):
     app = build_test_app(tmp_path, fail_analysis=True)
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def bipolar_client(tmp_path: Path):
+    app = build_test_app(tmp_path, recording_mode="converted_bipolar")
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def blocked_bipolar_client(tmp_path: Path):
+    app = build_test_app(tmp_path, recording_mode="blocked_bipolar")
     with TestClient(app) as test_client:
         yield test_client
 

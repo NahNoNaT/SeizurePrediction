@@ -14,6 +14,7 @@ from app.schemas import (
     CaseSummary,
     DashboardStats,
     HighRiskInterval,
+    ModelComparison,
     Recording,
     RecordingOverview,
     ReportSummary,
@@ -52,7 +53,12 @@ class ClinicalCaseStore:
                     sampling_rate REAL NOT NULL,
                     channel_count INTEGER NOT NULL,
                     channel_names_json TEXT NOT NULL,
+                    input_montage_type TEXT NOT NULL DEFAULT 'unsupported',
+                    conversion_status TEXT NOT NULL DEFAULT 'blocked',
+                    conversion_messages_json TEXT NOT NULL DEFAULT '[]',
                     mapped_channels_json TEXT NOT NULL,
+                    derived_channels_json TEXT NOT NULL DEFAULT '[]',
+                    approximated_channels_json TEXT NOT NULL DEFAULT '[]',
                     missing_channels_json TEXT NOT NULL DEFAULT '[]',
                     metadata_status TEXT NOT NULL DEFAULT 'PENDING',
                     mapped_channel_count INTEGER NOT NULL DEFAULT 0,
@@ -125,9 +131,40 @@ class ClinicalCaseStore:
                     FOREIGN KEY(analysis_id) REFERENCES clinical_analyses(id) ON DELETE CASCADE,
                     FOREIGN KEY(case_id) REFERENCES clinical_cases(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS analysis_model_runs (
+                    id TEXT PRIMARY KEY,
+                    analysis_id TEXT NOT NULL,
+                    model_key TEXT NOT NULL,
+                    model_label TEXT NOT NULL,
+                    model_version TEXT,
+                    checkpoint_path TEXT,
+                    status TEXT NOT NULL,
+                    backend_status TEXT NOT NULL,
+                    overall_risk TEXT,
+                    review_priority TEXT,
+                    estimated_seizure_risk REAL,
+                    max_risk_score REAL,
+                    mean_risk_score REAL,
+                    flagged_segments_count INTEGER NOT NULL DEFAULT 0,
+                    high_risk_intervals_count INTEGER NOT NULL DEFAULT 0,
+                    confidence_score REAL,
+                    confidence_label TEXT,
+                    agreement_score REAL,
+                    inference_time_seconds REAL,
+                    failure_code TEXT,
+                    failure_message TEXT,
+                    is_primary INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY(analysis_id) REFERENCES clinical_analyses(id) ON DELETE CASCADE
+                );
                 """
             )
             self._ensure_column(connection, "recordings", "missing_channels_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(connection, "recordings", "input_montage_type", "TEXT NOT NULL DEFAULT 'unsupported'")
+            self._ensure_column(connection, "recordings", "conversion_status", "TEXT NOT NULL DEFAULT 'blocked'")
+            self._ensure_column(connection, "recordings", "conversion_messages_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(connection, "recordings", "derived_channels_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(connection, "recordings", "approximated_channels_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(connection, "clinical_analyses", "status", "TEXT NOT NULL DEFAULT 'ANALYZING'")
             self._ensure_column(connection, "clinical_analyses", "failure_code", "TEXT")
             self._ensure_column(connection, "clinical_analyses", "failure_message", "TEXT")
@@ -174,9 +211,10 @@ class ClinicalCaseStore:
                 """
                 INSERT INTO recordings (
                     id, case_id, file_name, file_path, file_type, duration_sec, sampling_rate,
-                    channel_count, channel_names_json, mapped_channels_json, missing_channels_json, metadata_status,
-                    mapped_channel_count, validation_messages_json, uploaded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    channel_count, channel_names_json, input_montage_type, conversion_status,
+                    conversion_messages_json, mapped_channels_json, derived_channels_json, approximated_channels_json,
+                    missing_channels_json, metadata_status, mapped_channel_count, validation_messages_json, uploaded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     recording.recording_id,
@@ -188,7 +226,12 @@ class ClinicalCaseStore:
                     recording.sampling_rate,
                     recording.channel_count,
                     json.dumps(recording.channel_names),
+                    recording.input_montage_type,
+                    recording.conversion_status,
+                    json.dumps(recording.conversion_messages),
                     json.dumps(recording.mapped_channels),
+                    json.dumps(recording.derived_channels),
+                    json.dumps(recording.approximated_channels),
                     json.dumps(recording.missing_channels),
                     recording.validation_status,
                     recording.mapped_channel_count,
@@ -203,6 +246,7 @@ class ClinicalCaseStore:
         segment_results: list[SegmentResultRecord],
         high_risk_intervals: list[HighRiskInterval],
         *,
+        model_comparisons: list[ModelComparison] | None = None,
         trace_json: dict[str, Any] | None = None,
         case_status: str,
     ) -> None:
@@ -283,6 +327,45 @@ class ClinicalCaseStore:
                             interval.review_status,
                         )
                         for interval in high_risk_intervals
+                    ],
+                )
+            if model_comparisons:
+                connection.executemany(
+                    """
+                    INSERT INTO analysis_model_runs (
+                        id, analysis_id, model_key, model_label, model_version, checkpoint_path,
+                        status, backend_status, overall_risk, review_priority, estimated_seizure_risk,
+                        max_risk_score, mean_risk_score, flagged_segments_count, high_risk_intervals_count,
+                        confidence_score, confidence_label, agreement_score, inference_time_seconds,
+                        failure_code, failure_message, is_primary
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            item.model_run_id,
+                            analysis.analysis_id,
+                            item.model_key,
+                            item.model_label,
+                            item.model_version,
+                            item.checkpoint_path,
+                            item.status,
+                            item.backend_status,
+                            item.overall_risk,
+                            item.review_priority,
+                            item.estimated_seizure_risk,
+                            item.max_risk_score,
+                            item.mean_risk_score,
+                            item.flagged_segments_count,
+                            item.high_risk_intervals_count,
+                            item.confidence_score,
+                            item.confidence_label,
+                            item.agreement_score,
+                            item.inference_time_seconds,
+                            item.failure_code,
+                            item.failure_message,
+                            int(item.is_primary),
+                        )
+                        for item in model_comparisons
                     ],
                 )
             connection.execute(
@@ -482,6 +565,7 @@ class ClinicalCaseStore:
             recordings=recordings,
             analysis=active_analysis,
             analyses=analyses,
+            model_comparisons=self.list_model_comparisons(active_analysis.analysis_id) if active_analysis else [],
             segment_results=self.list_segment_results(active_analysis.analysis_id) if active_analysis else [],
             intervals=self.list_high_risk_intervals(active_analysis.analysis_id) if active_analysis else [],
             report=self.get_report_for_analysis(active_analysis.analysis_id) if active_analysis else None,
@@ -524,6 +608,7 @@ class ClinicalCaseStore:
             recordings=recordings,
             analysis=analysis,
             analyses=analyses,
+            model_comparisons=self.list_model_comparisons(analysis_id),
             segment_results=self.list_segment_results(analysis_id),
             intervals=self.list_high_risk_intervals(analysis_id),
             report=self.get_report_for_analysis(analysis_id),
@@ -574,6 +659,45 @@ class ClinicalCaseStore:
                 max_risk=row["max_risk"],
                 flagged_segments_count=row["flagged_segments_count"],
                 review_status=row["review_status"],
+            )
+            for row in rows
+        ]
+
+    def list_model_comparisons(self, analysis_id: str) -> list[ModelComparison]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM analysis_model_runs
+                WHERE analysis_id = ?
+                ORDER BY is_primary DESC, model_label ASC
+                """,
+                (analysis_id,),
+            ).fetchall()
+        return [
+            ModelComparison(
+                model_run_id=row["id"],
+                analysis_id=row["analysis_id"],
+                model_key=row["model_key"],
+                model_label=row["model_label"],
+                model_version=row["model_version"],
+                checkpoint_path=row["checkpoint_path"],
+                status=row["status"],
+                backend_status=row["backend_status"],
+                overall_risk=row["overall_risk"],
+                review_priority=row["review_priority"],
+                estimated_seizure_risk=row["estimated_seizure_risk"],
+                max_risk_score=row["max_risk_score"],
+                mean_risk_score=row["mean_risk_score"],
+                flagged_segments_count=row["flagged_segments_count"] or 0,
+                high_risk_intervals_count=row["high_risk_intervals_count"] or 0,
+                confidence_score=row["confidence_score"],
+                confidence_label=row["confidence_label"],
+                agreement_score=row["agreement_score"],
+                inference_time_seconds=row["inference_time_seconds"],
+                failure_code=row["failure_code"],
+                failure_message=row["failure_message"],
+                is_primary=bool(row["is_primary"]),
             )
             for row in rows
         ]
@@ -632,6 +756,7 @@ class ClinicalCaseStore:
         recordings: list[Recording],
         analysis: Analysis | None,
         analyses: list[Analysis],
+        model_comparisons: list[ModelComparison],
         segment_results: list[SegmentResult],
         intervals: list[HighRiskInterval],
         report: ReportSummary | None,
@@ -649,6 +774,7 @@ class ClinicalCaseStore:
             recordings=recordings,
             analysis=analysis,
             analyses=analyses,
+            model_comparisons=model_comparisons,
             high_risk_intervals=intervals,
             segment_results=segment_results,
             report=report,
@@ -660,6 +786,9 @@ class ClinicalCaseStore:
 
     def _row_to_recording(self, row: sqlite3.Row) -> Recording:
         mapped_channels = json.loads(row["mapped_channels_json"])
+        conversion_messages = json.loads(row["conversion_messages_json"]) if "conversion_messages_json" in row.keys() else []
+        derived_channels = json.loads(row["derived_channels_json"]) if "derived_channels_json" in row.keys() else []
+        approximated_channels = json.loads(row["approximated_channels_json"]) if "approximated_channels_json" in row.keys() else []
         missing_channels = json.loads(row["missing_channels_json"]) if "missing_channels_json" in row.keys() else []
         validation_messages = json.loads(row["validation_messages_json"])
         return Recording(
@@ -672,7 +801,12 @@ class ClinicalCaseStore:
             sampling_rate=row["sampling_rate"],
             channel_count=row["channel_count"],
             channel_names=json.loads(row["channel_names_json"]),
+            input_montage_type=row["input_montage_type"] if "input_montage_type" in row.keys() else "unsupported",
+            conversion_status=row["conversion_status"] if "conversion_status" in row.keys() else "blocked",
+            conversion_messages=conversion_messages,
             mapped_channels=mapped_channels,
+            derived_channels=derived_channels,
+            approximated_channels=approximated_channels,
             missing_channels=missing_channels,
             mapped_channel_count=row["mapped_channel_count"],
             validation_status=row["metadata_status"],

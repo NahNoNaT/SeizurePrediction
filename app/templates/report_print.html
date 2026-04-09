@@ -50,6 +50,14 @@
                 <span class="meta-label">Duration</span>
                 <strong>{{ recording_duration_label }}</strong>
             </div>
+            <div>
+                <span class="meta-label">Input Montage</span>
+                <strong>{{ case_detail.recording.input_montage_type|title if case_detail.recording else "Unknown" }}</strong>
+            </div>
+            <div>
+                <span class="meta-label">Conversion Status</span>
+                <strong>{{ case_detail.recording.conversion_status|title if case_detail.recording else "Unknown" }}</strong>
+            </div>
         </section>
 
         <section class="report-section report-metrics">
@@ -75,6 +83,67 @@
         <section class="report-section">
             <h2>Clinical Interpretation</h2>
             <p>{{ case_detail.analysis.interpretation if case_detail.analysis else "No interpretation available." }}</p>
+        </section>
+
+        {% if case_detail.recording and case_detail.recording.conversion_messages %}
+        <section class="report-section">
+            <h2>Input Montage Notes</h2>
+            {% for message in case_detail.recording.conversion_messages %}
+            <p>{{ message }}</p>
+            {% endfor %}
+        </section>
+        {% endif %}
+
+        <section class="report-section">
+            <h2>Model Comparison</h2>
+            <div class="table-wrap">
+                <table class="data-table compact-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Status</th>
+                            <th>Risk</th>
+                            <th>Confidence</th>
+                            <th>Agreement</th>
+                            <th>Priority</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for model in case_detail.model_comparisons %}
+                        <tr>
+                            <td>{{ model.model_label }}</td>
+                            <td>{{ model.status }}</td>
+                            <td>
+                                {% if model.overall_risk %}
+                                {{ model.overall_risk }} ({{ "%.0f"|format((model.estimated_seizure_risk or 0) * 100) }}%)
+                                {% else %}
+                                Unavailable
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if model.confidence_score is not none %}
+                                {{ model.confidence_label }} ({{ "%.0f"|format(model.confidence_score * 100) }}%)
+                                {% else %}
+                                Unavailable
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if model.agreement_score is not none %}
+                                {{ "%.0f"|format(model.agreement_score * 100) }}%
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>{{ model.review_priority or "-" }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6">No per-model comparison results were saved for this case.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </section>
 
         <section class="report-section">

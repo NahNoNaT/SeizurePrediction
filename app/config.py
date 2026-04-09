@@ -102,6 +102,7 @@ class RuntimeConfig(BaseModel):
     model_device_preference: str = os.getenv("SEIZURE_MODEL_DEVICE", "cpu")
     strict_checkpoint_loading: bool = _get_bool("SEIZURE_STRICT_CHECKPOINT_LOADING", True)
     checkpoint_path: str | None = os.getenv("SEIZURE_MODEL_CHECKPOINT", "models/checkpoints/seizure_prediction_model.pt")
+    checkpoint_paths: tuple[str, ...] = _get_csv("SEIZURE_MODEL_CHECKPOINTS", ())
     inference_status: str = "model_unavailable"
     supported_upload_extensions: tuple[str, ...] = (".edf",)
     clinician_upload_extensions: tuple[str, ...] = (".edf",)
@@ -141,6 +142,18 @@ class RuntimeConfig(BaseModel):
             return None
         path = Path(self.checkpoint_path)
         return path if path.is_absolute() else project_root / path
+
+    def configured_checkpoint_paths(self) -> tuple[str, ...]:
+        if self.checkpoint_paths:
+            return tuple(path for path in self.checkpoint_paths if path)
+        return (self.checkpoint_path,) if self.checkpoint_path else ()
+
+    def resolved_checkpoint_paths(self, project_root: Path) -> tuple[Path, ...]:
+        resolved: list[Path] = []
+        for checkpoint_path in self.configured_checkpoint_paths():
+            path = Path(checkpoint_path)
+            resolved.append(path if path.is_absolute() else project_root / path)
+        return tuple(resolved)
 
 
 def configure_logging(level: str = "INFO") -> None:

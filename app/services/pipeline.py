@@ -118,7 +118,27 @@ class SeizurePredictionPipeline:
         return {
             "backend_status": inference.backend_status,
             "inference_time_seconds": inference.inference_time_seconds,
+            "configured_model_count": inference.configured_model_count,
+            "successful_model_count": inference.successful_model_count,
+            "model_results": [
+                {
+                    "model_key": item.model_key,
+                    "model_label": item.model_label,
+                    "model_version": item.model_version,
+                    "checkpoint_path": item.checkpoint_path,
+                    "status": item.status,
+                    "backend_status": item.backend_status,
+                    "inference_time_seconds": item.inference_time_seconds,
+                    "failure_code": item.failure_code,
+                }
+                for item in inference.model_results
+            ],
             "preprocessing_notes": preprocessed.notes,
+            "input_montage_type": intake.input_montage_type,
+            "conversion_status": intake.conversion_status,
+            "conversion_messages": intake.conversion_messages,
+            "derived_channels": intake.derived_channels,
+            "approximated_channels": intake.approximated_channels,
             "mapped_channels_present": intake.mapped_channels,
             "missing_channels": intake.missing_channels,
             "required_channel_order": list(self.config.required_channel_order),

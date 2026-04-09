@@ -237,90 +237,123 @@ function centerWaveformTrace(signal) {
     return numericSignal.map((value) => value - mean);
 }
 
-function buildWaveformTraces(payload) {
-    const centeredSignals = payload.signals.map((signal) => centerWaveformTrace(signal));
-    const amplitudes = centeredSignals.map((signal) =>
-        signal.reduce((maxValue, value) => Math.max(maxValue, Math.abs(value)), 0),
-    );
-    const spacing = Math.max(...amplitudes, 1) * 3;
-    const channelCount = payload.channels.length;
-    const tickvals = [];
-    const traces = payload.channels.map((channelName, index) => {
-        const offset = (channelCount - index - 1) * spacing;
-        tickvals.push(offset);
-        return {
-            type: "scattergl",
-            mode: "lines",
-            name: channelName,
-            x: payload.times,
-            y: centeredSignals[index].map((value) => value + offset),
-            line: {
-                color: "#163f59",
-                width: 1.1,
-            },
-            hovertemplate: `${channelName}<br>Time: %{x:.2f}s<br>Amplitude: %{customdata:.2f}<extra></extra>`,
-            customdata: centeredSignals[index],
-        };
-    });
-
-    return { traces, tickvals, spacing };
+function escapeSvgText(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
 }
 
 function renderWaveformPlot(viewer, payload) {
     const plot = viewer.querySelector("[data-waveform-plot]");
-    if (!plot || typeof Plotly === "undefined") {
+    if (!plot) {
         setWaveformStatus(viewer, "Waveform plotting is unavailable in this browser.", true);
         return;
     }
 
     if (!Array.isArray(payload.channels) || payload.channels.length === 0 || !Array.isArray(payload.times) || payload.times.length === 0) {
-        Plotly.purge(plot);
+        clearWaveformCanvas(plot);
         setWaveformStatus(viewer, "No waveform samples were returned for the requested preview window.", true);
         summarizeWaveformChannels(viewer, []);
         return;
     }
 
-    const { traces, tickvals, spacing } = buildWaveformTraces(payload);
-    const layout = {
-        height: Math.max(380, payload.channels.length * 92),
-        margin: { l: 92, r: 28, t: 18, b: 54 },
-        paper_bgcolor: "#f7fbfc",
-        plot_bgcolor: "#ffffff",
-        showlegend: false,
-        dragmode: "pan",
-        xaxis: {
-            title: "Time (s)",
-            gridcolor: "rgba(95, 120, 135, 0.16)",
-            zeroline: false,
-            linecolor: "#c7dce3",
-        },
-        yaxis: {
-            tickmode: "array",
-            tickvals,
-            ticktext: payload.channels,
-            showgrid: false,
-            zeroline: false,
-            linecolor: "#c7dce3",
-            range: [-spacing * 0.75, tickvals[0] + spacing * 0.75],
-        },
-        font: {
-            family: "'Source Sans 3', sans-serif",
-            color: "#1c3342",
-        },
-    };
-    const config = {
-        responsive: true,
-        displaylogo: false,
-        scrollZoom: true,
-        modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"],
-    };
+    window.requestAnimationFrame(() => {
+        drawWaveformCanvas(plot, payload);
+        setWaveformStatus(
+            viewer,
+            `Showing ${payload.duration_sec.toFixed(1)}s from ${payload.start_sec.toFixed(1)}s at ${payload.sampling_rate.toFixed(1)} Hz.`,
+        );
+        summarizeWaveformChannels(viewer, payload.channels);
+    });
+}
 
-    Plotly.react(plot, traces, layout, config);
-    setWaveformStatus(
-        viewer,
-        `Showing ${payload.duration_sec.toFixed(1)}s from ${payload.start_sec.toFixed(1)}s at ${payload.sampling_rate.toFixed(1)} Hz.`,
-    );
-    summarizeWaveformChannels(viewer, payload.channels);
+function clearWaveformCanvas(plot) {
+    if (!(plot instanceof HTMLElement)) {
+        return;
+    }
+
+    if (plot instanceof HTMLCanvasElement) {
+        const context = plot.getContext("2d");
+        if (context) {
+            context.clearRect(0, 0, plot.width, plot.height);
+        }
+    }
+
+    plot.innerHTML = "";
+}
+
+function drawWaveformCanvas(plot, payload) {
+    if (!(plot instanceof HTMLElement)) {
+        return;
+    }
+
+    const width = Math.max(plot.clientWidth || plot.parentElement?.clientWidth || 640, 640);
+    const channelCount = payload.channels.length;
+    const height = Math.max(380, channelCount * 92);
+    const margin = { top: 20, right: 20, bottom: 34, left: 84 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const timeStart = Number(payload.times[0] || 0);
+    const timeEnd = Number(payload.times[payload.times.length - 1] || timeStart + 1);
+    const timeSpan = Math.max(timeEnd - timeStart, 1e-6);
+    const rowHeight = plotHeight / Math.max(channelCount, 1);
+    const channels = payload.channels;
+    const centeredSignals = payload.signals.map((signal) => centerWaveformTrace(signal));
+
+    const parts = [
+        `<svg class="waveform-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="EEG waveform preview" xmlns="http://www.w3.org/2000/svg">`,
+        `<rect x="0" y="0" width="${width}" height="${height}" rx="18" fill="#ffffff" />`,
+    ];
+
+    for (let index = 0; index <= 6; index += 1) {
+        const x = margin.left + (plotWidth * index) / 6;
+        parts.push(
+            `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${margin.top + plotHeight}" stroke="rgba(95, 120, 135, 0.16)" stroke-width="1" />`,
+        );
+    }
+
+    for (let index = 0; index <= 6; index += 1) {
+        const ratio = index / 6;
+        const x = margin.left + plotWidth * ratio;
+        const value = timeStart + timeSpan * ratio;
+        parts.push(
+            `<text x="${x}" y="${height - 10}" fill="#5f7887" font-size="12" font-family="'Source Sans 3', sans-serif" text-anchor="middle">${escapeSvgText(`${value.toFixed(1)}s`)}</text>`,
+        );
+    }
+
+    channels.forEach((channelName, channelIndex) => {
+        const rowTop = margin.top + rowHeight * channelIndex;
+        const rowCenter = rowTop + rowHeight / 2;
+        const signal = centeredSignals[channelIndex] || [];
+        const amplitude = signal.reduce((maxValue, value) => Math.max(maxValue, Math.abs(Number(value))), 0) || 1;
+        const scaleY = (rowHeight * 0.34) / amplitude;
+        const points = signal
+            .map((value, sampleIndex) => {
+                const x = margin.left + (plotWidth * sampleIndex) / Math.max(signal.length - 1, 1);
+                const y = rowCenter - Number(value) * scaleY;
+                return `${x.toFixed(2)},${y.toFixed(2)}`;
+            })
+            .join(" ");
+
+        parts.push(
+            `<line x1="${margin.left}" y1="${rowCenter}" x2="${margin.left + plotWidth}" y2="${rowCenter}" stroke="rgba(199, 220, 227, 0.9)" stroke-width="1" />`,
+        );
+        parts.push(
+            `<text x="12" y="${rowCenter + 4}" fill="#1c3342" font-size="13" font-family="'Source Sans 3', sans-serif">${escapeSvgText(channelName)}</text>`,
+        );
+        if (points) {
+            parts.push(
+                `<polyline points="${points}" fill="none" stroke="#163f59" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round" />`,
+            );
+        }
+    });
+
+    parts.push("</svg>");
+    plot.style.height = `${height}px`;
+    plot.innerHTML = parts.join("");
 }
 
 async function loadWaveformPreview(viewer) {
@@ -373,9 +406,7 @@ async function loadWaveformPreview(viewer) {
         setWaveformMessages(viewer, messages);
     } catch (error) {
         const plot = viewer.querySelector("[data-waveform-plot]");
-        if (plot && typeof Plotly !== "undefined") {
-            Plotly.purge(plot);
-        }
+        clearWaveformCanvas(plot);
         summarizeWaveformChannels(viewer, []);
         setWaveformMessages(viewer, []);
         setWaveformStatus(

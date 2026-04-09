@@ -4,6 +4,9 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
+
+import numpy as np
 
 from app.config import RuntimeConfig, runtime_config
 from app.schemas import (
@@ -13,6 +16,7 @@ from app.schemas import (
     AnalysisTimelineEntry,
     CaseDetail,
     ClinicalSummaryState,
+    ModelComparison,
     RecordingPreviewResponse,
     RecordingOverview,
     ReportSummary,
@@ -37,6 +41,7 @@ class WorkflowRunResult:
     inference: InferenceOutput | None
     temporal: TemporalAnalysisResult | None
     assessment: ClinicalAssessmentResult
+    model_comparisons: list[ModelComparison]
     trace_json: dict
 
 
@@ -69,8 +74,18 @@ class ClinicalAnalysisService:
             config=config,
         )
 
-    def inspect_recording(self, file_path: Path, *, clinician_mode: bool = True) -> EEGIntakeResult:
-        return self.intake_service.inspect(file_path, clinician_mode=clinician_mode)
+    def inspect_recording(
+        self,
+        file_path: Path,
+        *,
+        clinician_mode: bool = True,
+        enforce_validation: bool = True,
+    ) -> EEGIntakeResult:
+        return self.intake_service.inspect(
+            file_path,
+            clinician_mode=clinician_mode,
+            enforce_validation=enforce_validation,
+        )
 
     def preview_recording(
         self,
@@ -119,7 +134,12 @@ class ClinicalAnalysisService:
             sampling_rate=float(self.config.target_sampling_rate_hz),
             channel_count=intake.channel_count,
             channel_names=intake.channel_names,
+            input_montage_type=intake.input_montage_type,
+            conversion_status=intake.conversion_status,
+            conversion_messages=intake.conversion_messages,
             mapped_channels=intake.mapped_channels,
+            derived_channels=intake.derived_channels,
+            approximated_channels=intake.approximated_channels,
             missing_channels=intake.missing_channels,
             mapped_channel_count=len(intake.mapped_channels),
             validation_status=intake.validation_status,
@@ -128,7 +148,7 @@ class ClinicalAnalysisService:
         )
 
     def run_recording_analysis(self, *, case_id: str, recording: RecordingOverview) -> WorkflowRunResult:
-        intake = self.inspect_recording(Path(recording.file_path), clinician_mode=False)
+        intake = self.inspect_recording(Path(recording.file_path), clinician_mode=False, enforce_validation=True)
         try:
             pipeline_result = self.pipeline.run_detailed(
                 case_id=case_id,
@@ -154,6 +174,7 @@ class ClinicalAnalysisService:
                 inference=None,
                 temporal=None,
                 assessment=failure_assessment,
+                model_comparisons=[],
                 trace_json={
                     "backend_status": self.config.inference_status,
                     "failure_code": exc.code,
@@ -167,6 +188,13 @@ class ClinicalAnalysisService:
             "Analysis completed",
             extra={"event": "analysis_completed", "case_id": case_id, "recording_id": recording.recording_id, "status": "COMPLETED"},
         )
+        model_comparisons = self._build_model_comparisons(
+            case_id=case_id,
+            recording=recording,
+            inference=pipeline_result.inference,
+            aggregate_scores=pipeline_result.inference.risk_scores,
+            segment_times=pipeline_result.preprocessed.segment_times,
+        )
         return WorkflowRunResult(
             recording=recording,
             intake=pipeline_result.intake,
@@ -174,6 +202,7 @@ class ClinicalAnalysisService:
             inference=pipeline_result.inference,
             temporal=pipeline_result.temporal,
             assessment=pipeline_result.assessment,
+            model_comparisons=model_comparisons,
             trace_json=pipeline_result.trace_json,
         )
 
@@ -181,10 +210,18 @@ class ClinicalAnalysisService:
         return self.reporting_service.generate(report_id=report_id, case_detail=case_detail)
 
     def build_case_analysis_state(self, case_detail: CaseDetail) -> AnalysisStateResponse:
+        if case_detail.recording is not None and case_detail.recording.validation_status == "BLOCKED":
+            return self.build_failed_state(
+                error=" ".join(case_detail.recording.validation_messages) or "Recording validation blocked analysis.",
+                model_comparisons=case_detail.model_comparisons,
+            )
         if case_detail.recording is None or case_detail.analysis is None:
             return self.build_pending_state()
         if case_detail.analysis.status == "FAILED":
-            return self.build_failed_state(error=case_detail.analysis.failure_message)
+            return self.build_failed_state(
+                error=case_detail.analysis.failure_message,
+                model_comparisons=case_detail.model_comparisons,
+            )
         return self.build_completed_state(case_detail)
 
     def build_pending_state(self) -> AnalysisStateResponse:
@@ -199,22 +236,36 @@ class ClinicalAnalysisService:
                 summary_text="Clinical findings will appear here once the analysis is complete.",
                 recommendation="Awaiting analysis.",
             ),
+            model_comparisons=[],
             timeline=[],
             segments=[],
         )
 
-    def build_failed_state(self, *, error: str | None) -> AnalysisStateResponse:
+    def build_failed_state(
+        self,
+        *,
+        error: str | None,
+        model_comparisons: list[ModelComparison] | None = None,
+    ) -> AnalysisStateResponse:
+        resolved_error = error or "Analysis could not be completed."
+        if any(token in resolved_error.lower() for token in ("montage", "channel", "bipolar", "conversion")):
+            summary_text = "Analysis was blocked because the uploaded EEG montage could not be converted into a model-ready input with sufficient coverage."
+            recommendation = "Review the montage/conversion notes and confirm the EDF channel layout before retrying analysis."
+        else:
+            summary_text = "Analysis could not be completed."
+            recommendation = "Please review the technical issue before retrying."
         return AnalysisStateResponse(
             status="failed",
-            error=error or "Analysis could not be completed.",
+            error=resolved_error,
             clinical_summary=ClinicalSummaryState(
                 risk_score=0,
                 risk_level="failed",
                 priority="analysis_failed",
                 flagged_segments=0,
-                summary_text="Analysis could not be completed.",
-                recommendation="Please review the technical issue before retrying.",
+                summary_text=summary_text,
+                recommendation=recommendation,
             ),
+            model_comparisons=model_comparisons or [],
             timeline=[],
             segments=[],
         )
@@ -262,6 +313,94 @@ class ClinicalAnalysisService:
             status="completed",
             error=None,
             clinical_summary=summary,
+            model_comparisons=case_detail.model_comparisons,
             timeline=timeline,
             segments=segments,
         )
+
+    def _build_model_comparisons(
+        self,
+        *,
+        case_id: str,
+        recording: RecordingOverview,
+        inference: InferenceOutput,
+        aggregate_scores: np.ndarray,
+        segment_times: list[tuple[float, float]],
+    ) -> list[ModelComparison]:
+        comparisons: list[ModelComparison] = []
+        for model_result in inference.model_results:
+            if model_result.status != "COMPLETED" or model_result.risk_scores is None:
+                comparisons.append(
+                    ModelComparison(
+                        model_run_id=str(uuid4()),
+                        analysis_id="",
+                        model_key=model_result.model_key,
+                        model_label=model_result.model_label,
+                        model_version=model_result.model_version,
+                        checkpoint_path=model_result.checkpoint_path,
+                        status="FAILED",
+                        backend_status=model_result.backend_status,
+                        failure_code=model_result.failure_code,  # type: ignore[arg-type]
+                        failure_message=model_result.failure_message,
+                    )
+                )
+                continue
+
+            temporal = self.temporal_service.analyze(model_result.risk_scores, segment_times)
+            assessment = self.clinical_service.build_assessment(
+                case_id=case_id,
+                recording=recording,
+                model_version=model_result.model_version or self.config.default_model_version,
+                temporal_result=temporal,
+            )
+            confidence_score = self._confidence_score(model_result.risk_scores, aggregate_scores, temporal)
+            comparisons.append(
+                ModelComparison(
+                    model_run_id=str(uuid4()),
+                    analysis_id=assessment.analysis.analysis_id,
+                    model_key=model_result.model_key,
+                    model_label=model_result.model_label,
+                    model_version=model_result.model_version,
+                    checkpoint_path=model_result.checkpoint_path,
+                    status="COMPLETED",
+                    backend_status=model_result.backend_status,
+                    overall_risk=assessment.analysis.overall_risk,
+                    review_priority=assessment.analysis.review_priority,
+                    estimated_seizure_risk=assessment.analysis.estimated_seizure_risk,
+                    max_risk_score=assessment.analysis.max_risk_score,
+                    mean_risk_score=assessment.analysis.mean_risk_score,
+                    flagged_segments_count=assessment.analysis.flagged_segments_count,
+                    high_risk_intervals_count=assessment.analysis.high_risk_intervals_count,
+                    confidence_score=confidence_score,
+                    confidence_label=self._confidence_label(confidence_score),
+                    agreement_score=self._agreement_score(model_result.risk_scores, aggregate_scores),
+                    inference_time_seconds=model_result.inference_time_seconds,
+                    is_primary=False,
+                )
+            )
+        return comparisons
+
+    def _confidence_score(
+        self,
+        model_scores: np.ndarray,
+        aggregate_scores: np.ndarray,
+        temporal: TemporalAnalysisResult,
+    ) -> float:
+        threshold = self.config.default_threshold
+        margin_score = float(np.clip(np.mean(np.abs(model_scores - threshold)) / max(1.0 - threshold, threshold), 0.0, 1.0))
+        agreement_score = self._agreement_score(model_scores, aggregate_scores)
+        flagged_ratio = sum(1 for point in temporal.timeline if point.is_flagged) / max(len(temporal.timeline), 1)
+        stability_score = max(flagged_ratio, 1.0 - flagged_ratio)
+        return float(np.clip(0.45 * margin_score + 0.35 * agreement_score + 0.20 * stability_score, 0.05, 0.99))
+
+    def _agreement_score(self, model_scores: np.ndarray, aggregate_scores: np.ndarray) -> float:
+        if model_scores.shape != aggregate_scores.shape or model_scores.size == 0:
+            return 0.0
+        return float(np.clip(1.0 - np.mean(np.abs(model_scores - aggregate_scores)), 0.0, 1.0))
+
+    def _confidence_label(self, confidence_score: float) -> str:
+        if confidence_score >= 0.75:
+            return "High"
+        if confidence_score >= 0.5:
+            return "Moderate"
+        return "Low"

@@ -20,6 +20,10 @@
                 <strong>{{ admin_settings.model_version }}</strong>
             </div>
             <div class="admin-item">
+                <span>Configured model slots</span>
+                <strong>{{ admin_settings.configured_model_count }}</strong>
+            </div>
+            <div class="admin-item">
                 <span>Processing environment</span>
                 <strong>{{ admin_settings.model_device }}</strong>
             </div>
@@ -40,10 +44,15 @@
 
         <form class="stack-form" method="post" action="/admin/checkpoint">
             <label>
-                <span>Package path</span>
-                <input type="text" name="checkpoint_path" value="{{ admin_settings.checkpoint_path or '' }}" placeholder="D:\path\to\clinical-package.pt" required>
+                <span>Checkpoint paths</span>
+                <textarea
+                    name="checkpoint_paths"
+                    rows="6"
+                    placeholder="D:\path\to\model-1.pt&#10;D:\path\to\model-2.pt&#10;D:\path\to\model-3.pt&#10;D:\path\to\model-4.pt"
+                    required
+                >{{ admin_settings.checkpoint_paths|join('\n') }}</textarea>
             </label>
-            <button type="submit" class="button button-primary">Update Package</button>
+            <button type="submit" class="button button-primary">Update Models</button>
         </form>
     </article>
 </section>
@@ -67,6 +76,10 @@
                     <td>Consistent clinical review support</td>
                 </tr>
                 <tr>
+                    <th>Supported input modes</th>
+                    <td>{{ admin_settings.supported_input_modes|join(' ') }}</td>
+                </tr>
+                <tr>
                     <th>Minimum mapped channels</th>
                     <td>{{ admin_settings.minimum_mapped_channels }}</td>
                 </tr>
@@ -81,5 +94,53 @@
             </tbody>
         </table>
     </div>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Model slots</p>
+            <h2>Configured model load status</h2>
+        </div>
+    </div>
+    {% if admin_settings.model_slots %}
+    <div class="table-wrap">
+        <table class="data-table compact-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Status</th>
+                    <th>Backend</th>
+                    <th>Version</th>
+                    <th>Checkpoint</th>
+                    <th>Detail</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for slot in admin_settings.model_slots %}
+                <tr>
+                    <td>{{ slot.model_label }}</td>
+                    <td>
+                        {% if slot.status == "READY" %}
+                        <span class="badge badge-success">Ready</span>
+                        {% else %}
+                        <span class="badge badge-muted">Failed</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ slot.backend_status }}</td>
+                    <td>{{ slot.model_version or "-" }}</td>
+                    <td>{{ slot.checkpoint_path }}</td>
+                    <td>{{ slot.detail or "-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state subtle-empty">
+        <h3>No model slots configured</h3>
+        <p>Add one or more checkpoint paths above to load model slots for comparison.</p>
+    </div>
+    {% endif %}
 </section>
 {% endblock %}

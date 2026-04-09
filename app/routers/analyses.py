@@ -23,6 +23,9 @@ async def api_analyze_recording(request: Request, recording_id: str) -> Analysis
         raise app_http_exception(404, "recording_not_found", "Recording not found.")
     if case_store.get_case_detail(recording.case_id) is None:
         raise app_http_exception(404, "case_not_found", "Case not found.")
+    if recording.validation_status == "BLOCKED":
+        detail = " ".join(recording.validation_messages) or "Recording validation blocked analysis."
+        raise app_http_exception(409, "validation_failed", detail)
 
     try:
         detail, _ = persist_analysis_bundle(

@@ -39,3 +39,25 @@ def test_recording_preview_returns_limited_waveform_window(client, case_payload)
     assert payload["duration_sec"] == 30
     assert len(payload["times"]) > 0
     assert len(payload["signals"]) == 2
+
+
+def test_bipolar_recording_upload_is_saved_and_reports_conversion_metadata(blocked_bipolar_client, case_payload):
+    case_response = blocked_bipolar_client.post("/api/cases", json=case_payload)
+    case_id = case_response.json()["case"]["case_id"]
+
+    upload_response = blocked_bipolar_client.post(
+        f"/api/cases/{case_id}/recordings",
+        files={"eeg_file": ("recording.edf", b"fake-edf-payload", "application/octet-stream")},
+    )
+
+    assert upload_response.status_code == 201
+    recording = upload_response.json()["recording"]
+    assert recording["input_montage_type"] == "bipolar"
+    assert recording["conversion_status"] == "blocked"
+    assert recording["validation_status"] == "BLOCKED"
+
+    preview_response = blocked_bipolar_client.get(f"/api/recordings/{recording['recording_id']}/preview")
+    assert preview_response.status_code == 200
+    payload = preview_response.json()
+    assert len(payload["channels"]) > 0
+    assert len(payload["signals"]) > 0

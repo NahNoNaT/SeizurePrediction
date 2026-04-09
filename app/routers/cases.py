@@ -112,7 +112,7 @@ async def create_case_and_run_analysis(
         )
         case_store.update_case_status(case_id, "UPLOADED", upload["created_at"])
 
-        intake = workflow_service.inspect_recording(upload_path, clinician_mode=True)
+        intake = workflow_service.inspect_recording(upload_path, clinician_mode=True, enforce_validation=False)
         recording = workflow_service.build_recording_overview(
             recording_id=str(uuid4()),
             case_id=case_id,
@@ -122,6 +122,13 @@ async def create_case_and_run_analysis(
             uploaded_at=upload["created_at"],
         )
         case_store.create_recording(recording)
+        if recording.validation_status != "VALIDATED":
+            case_store.update_case_status(case_id, "FAILED", upload["created_at"])
+            return build_redirect(
+                f"/cases/{case_id}",
+                " ".join(recording.validation_messages) or "Recording validation blocked analysis.",
+                "error",
+            )
         case_store.update_case_status(case_id, "VALIDATED", upload["created_at"])
 
         detail, _ = persist_analysis_bundle(
@@ -149,8 +156,6 @@ async def create_case_and_run_analysis(
         return build_redirect("/cases/new", detail.get("detail", "Unable to process the uploaded recording."), "error")
     except EEGValidationError as exc:
         logger.warning("Recording validation failed", extra={"event": "recording_validation_failed", "case_id": case_id, "status": "FAILED", "code": exc.code})
-        if upload_path and upload_path.exists():
-            upload_path.unlink(missing_ok=True)
         case_store.update_case_status(case_id, "FAILED", datetime.now(timezone.utc))
         return build_redirect(f"/cases/{case_id}", exc.public_detail, "error")
     except Exception as exc:

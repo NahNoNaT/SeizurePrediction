@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 
@@ -14,12 +16,20 @@ router = APIRouter()
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request) -> HTMLResponse:
     templates = request.app.state.templates
+    configured_paths = list(runtime_config.configured_checkpoint_paths())
     admin_settings = AdminSettingsSummary(
         checkpoint_path=runtime_config.checkpoint_path,
+        checkpoint_paths=configured_paths,
         model_version=runtime_config.default_model_version,
         backend_status=runtime_config.inference_status,
         model_device=runtime_config.model_device_preference,
+        configured_model_count=len(configured_paths),
+        model_slots=get_inference_service(request).model_slot_statuses(),
         target_sample_rate_hz=runtime_config.target_sampling_rate_hz,
+        supported_input_modes=[
+            "Referential scalp EEG channels are accepted directly.",
+            "Recognized bipolar EEG chains are converted heuristically before inference.",
+        ],
         required_channel_order=list(runtime_config.required_channel_order),
         minimum_mapped_channels=runtime_config.minimum_mapped_channels,
         max_zero_fill_channels=runtime_config.max_zero_fill_channels,
@@ -39,10 +49,15 @@ async def admin_page(request: Request) -> HTMLResponse:
 
 
 @router.post("/admin/checkpoint")
-async def admin_update_checkpoint(request: Request, checkpoint_path: str = Form(...)):
+async def admin_update_checkpoint(request: Request, checkpoint_paths: str = Form(...)):
     inference_service = get_inference_service(request)
     try:
-        inference_service.load_checkpoint(checkpoint_path.strip())
+        parsed_paths = [value.strip() for value in re.split(r"[\r\n,;]+", checkpoint_paths) if value.strip()]
+        if not parsed_paths:
+            raise ValueError("Please provide at least one checkpoint path.")
+        runtime_config.checkpoint_paths = tuple(parsed_paths)
+        runtime_config.checkpoint_path = parsed_paths[0]
+        inference_service.load_models()
     except Exception as exc:
         return build_redirect("/admin", str(exc), "error")
     return build_redirect("/admin", "Model checkpoint updated successfully.", "success")
@@ -66,5 +81,6 @@ async def model_info() -> AppMetadataResponse:
         max_upload_size_mb=runtime_config.max_upload_size_mb,
         backend_status=runtime_config.inference_status,
         model_version=runtime_config.default_model_version,
+        configured_model_count=len(runtime_config.configured_checkpoint_paths()),
         research_disclaimer=runtime_config.research_disclaimer,
     )

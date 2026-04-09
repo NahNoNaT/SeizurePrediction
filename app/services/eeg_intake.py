@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
@@ -8,7 +9,7 @@ from typing import Sequence
 import numpy as np
 
 from app.config import RuntimeConfig, runtime_config
-from app.schemas import RecordingValidationStatus
+from app.schemas import ConversionStatus, InputMontageType, RecordingValidationStatus
 from app.services.errors import EEGValidationError
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,13 @@ class EEGIntakeResult:
     duration_sec: float
     channel_count: int
     channel_names: list[str]
+    input_montage_type: InputMontageType
+    conversion_status: ConversionStatus
+    conversion_messages: list[str]
     traces_by_channel: dict[str, ChannelTrace]
     mapped_channels: list[str]
+    derived_channels: list[str]
+    approximated_channels: list[str]
     missing_channels: list[str]
     validation_status: RecordingValidationStatus
     zero_fill_allowed: bool
@@ -94,6 +100,16 @@ class EEGPreviewResult:
     signals: list[list[float]]
 
 
+@dataclass
+class MontageConversionResult:
+    traces_by_channel: dict[str, ChannelTrace]
+    input_montage_type: InputMontageType
+    conversion_status: ConversionStatus
+    conversion_messages: list[str]
+    derived_channels: list[str] = field(default_factory=list)
+    approximated_channels: list[str] = field(default_factory=list)
+
+
 class EEGIntakeService:
     default_preview_duration_sec = 30.0
     max_preview_duration_sec = 60.0
@@ -104,7 +120,13 @@ class EEGIntakeService:
         self.config = config
         self.required_channel_order = list(config.required_channel_order)
 
-    def inspect(self, file_path: Path, *, clinician_mode: bool = True) -> EEGIntakeResult:
+    def inspect(
+        self,
+        file_path: Path,
+        *,
+        clinician_mode: bool = True,
+        enforce_validation: bool = True,
+    ) -> EEGIntakeResult:
         extension = file_path.suffix.lower()
         if clinician_mode and extension not in self.config.clinician_upload_extensions:
             raise EEGValidationError(
@@ -119,14 +141,20 @@ class EEGIntakeService:
         else:
             raise EEGValidationError("validation_failed", f"Unsupported EEG recording type '{extension}'.")
 
-        self._validate_for_analysis(result)
+        failure_message = self._validate_for_analysis(result)
         logger.info(
             "Recording validated",
             extra={"event": "recording_validated", "status": result.validation_status},
         )
+        if enforce_validation and failure_message:
+            raise EEGValidationError(
+                "validation_failed",
+                failure_message,
+                public_detail=failure_message,
+            )
         return result
 
-    def _validate_for_analysis(self, result: EEGIntakeResult) -> None:
+    def _validate_for_analysis(self, result: EEGIntakeResult) -> str | None:
         mapped_count = len(result.mapped_channels)
         missing_count = len(result.missing_channels)
         missing_regions = [
@@ -135,7 +163,7 @@ class EEGIntakeService:
             if not any(channel in result.mapped_channels for channel in channels)
         ]
 
-        validation_messages = list(result.validation_messages)
+        validation_messages = list(result.validation_messages) + list(result.conversion_messages)
         if result.duration_sec < self.config.minimum_recording_duration_seconds:
             validation_messages.append(
                 "Recording duration is too short for clinical analysis."
@@ -150,6 +178,15 @@ class EEGIntakeService:
             regions_label = ", ".join(missing_regions)
             validation_messages.append(
                 f"Clinical coverage is incomplete across the following regions: {regions_label}."
+            )
+
+        if result.input_montage_type == "unsupported":
+            validation_messages.append(
+                "The uploaded EDF montage could not be matched to the current model input or converted from a supported bipolar chain."
+            )
+        elif result.conversion_status == "blocked":
+            validation_messages.append(
+                "Montage conversion was not sufficient to build a model-ready EEG input."
             )
 
         zero_fill_allowed = (
@@ -184,12 +221,8 @@ class EEGIntakeService:
                 "Recording validation blocked analysis",
                 extra={"event": "recording_blocked", "status": result.validation_status},
             )
-            failure_message = " ".join(validation_messages)
-            raise EEGValidationError(
-                "validation_failed",
-                failure_message,
-                public_detail=failure_message,
-            )
+            return " ".join(validation_messages)
+        return None
 
     def _read_edf(self, file_path: Path) -> EEGIntakeResult:
         if mne is not None:
@@ -375,8 +408,14 @@ class EEGIntakeService:
         channel_names: list[str],
         trace_map: dict[str, ChannelTrace],
     ) -> EEGIntakeResult:
-        mapped_channels = [channel for channel in self.required_channel_order if channel in trace_map]
-        missing_channels = [channel for channel in self.required_channel_order if channel not in trace_map]
+        conversion = self._resolve_analysis_montage(
+            duration_sec=duration_sec,
+            channel_names=channel_names,
+            raw_trace_map=trace_map,
+        )
+        analysis_trace_map = conversion.traces_by_channel
+        mapped_channels = [channel for channel in self.required_channel_order if channel in analysis_trace_map]
+        missing_channels = [channel for channel in self.required_channel_order if channel not in analysis_trace_map]
         validation_messages = [
             f"Mapped {len(mapped_channels)} of {len(self.required_channel_order)} required scalp EEG channels.",
             f"Recording duration: {duration_sec / 60.0:.1f} minutes." if duration_sec else "Recording duration could not be determined precisely.",
@@ -386,8 +425,13 @@ class EEGIntakeService:
             duration_sec=round(duration_sec, 2),
             channel_count=len(channel_names),
             channel_names=channel_names,
-            traces_by_channel=trace_map,
+            input_montage_type=conversion.input_montage_type,
+            conversion_status=conversion.conversion_status,
+            conversion_messages=conversion.conversion_messages,
+            traces_by_channel=analysis_trace_map,
             mapped_channels=mapped_channels,
+            derived_channels=conversion.derived_channels,
+            approximated_channels=conversion.approximated_channels,
             missing_channels=missing_channels,
             validation_status="PENDING",
             zero_fill_allowed=False,
@@ -452,6 +496,266 @@ class EEGIntakeService:
             )
         finally:
             reader.close()
+
+    def _resolve_analysis_montage(
+        self,
+        *,
+        duration_sec: float,
+        channel_names: list[str],
+        raw_trace_map: dict[str, ChannelTrace],
+    ) -> MontageConversionResult:
+        direct_traces = {
+            channel: raw_trace_map[channel]
+            for channel in self.required_channel_order
+            if channel in raw_trace_map
+        }
+        direct_count = len(direct_traces)
+        bipolar_detected = self._looks_like_bipolar_montage(channel_names)
+        if direct_count > 0 and not bipolar_detected:
+            return MontageConversionResult(
+                traces_by_channel=direct_traces,
+                input_montage_type="referential",
+                conversion_status="direct",
+                conversion_messages=[
+                    "Referential scalp EEG channels were mapped directly to the model input montage.",
+                ],
+            )
+
+        if bipolar_detected:
+            conversion = self._convert_bipolar_to_model_input(
+                raw_trace_map=raw_trace_map,
+                duration_sec=duration_sec,
+                direct_traces=direct_traces,
+            )
+            if conversion.traces_by_channel:
+                return conversion
+            return MontageConversionResult(
+                traces_by_channel=direct_traces,
+                input_montage_type="bipolar",
+                conversion_status="blocked",
+                conversion_messages=conversion.conversion_messages
+                or [
+                    "The EDF appears to use bipolar channel labels, but the available chains were insufficient for model input conversion."
+                ],
+            )
+
+        return MontageConversionResult(
+            traces_by_channel=direct_traces,
+            input_montage_type="unsupported",
+            conversion_status="blocked",
+            conversion_messages=[
+                "The EDF channel layout did not match a supported referential montage and could not be recognized as a convertible bipolar montage."
+            ],
+        )
+
+    def _convert_bipolar_to_model_input(
+        self,
+        *,
+        raw_trace_map: dict[str, ChannelTrace],
+        duration_sec: float,
+        direct_traces: dict[str, ChannelTrace],
+    ) -> MontageConversionResult:
+        expected_samples = max(
+            int(round(max(duration_sec, self.config.default_window_length_seconds) * self.config.target_sampling_rate_hz)),
+            self.config.default_window_size,
+        )
+        target_rate = float(self.config.target_sampling_rate_hz)
+        edge_signals = self._build_bipolar_edge_signals(
+            raw_trace_map=raw_trace_map,
+            expected_samples=expected_samples,
+            target_rate=target_rate,
+        )
+        if not edge_signals:
+            return MontageConversionResult(
+                traces_by_channel={},
+                input_montage_type="bipolar",
+                conversion_status="blocked",
+                conversion_messages=[
+                    "No supported bipolar channel pairs were recognized for montage conversion.",
+                ],
+            )
+
+        potentials = self._solve_component_potentials(edge_signals, expected_samples)
+        left_posterior_present = any(channel in potentials for channel in ("T5", "O1"))
+        right_posterior_present = any(channel in potentials for channel in ("T6", "O2"))
+        if not left_posterior_present or not right_posterior_present:
+            return MontageConversionResult(
+                traces_by_channel={},
+                input_montage_type="bipolar",
+                conversion_status="blocked",
+                conversion_messages=[
+                    "Bipolar channel pairs were recognized, but posterior left/right chain coverage was insufficient for reliable montage conversion."
+                ],
+            )
+        traces: dict[str, ChannelTrace] = {
+            channel: ChannelTrace(
+                source_name=trace.source_name,
+                canonical_name=trace.canonical_name,
+                sampling_rate=trace.sampling_rate,
+                signal=self._fit_length(self._resample_signal(trace.signal, trace.sampling_rate, target_rate), expected_samples),
+            )
+            for channel, trace in direct_traces.items()
+        }
+        derived_channels: list[str] = []
+        approximated_channels: list[str] = []
+        for channel in self.required_channel_order:
+            if channel in traces:
+                continue
+            signal = potentials.get(channel)
+            if signal is None:
+                continue
+            traces[channel] = ChannelTrace(
+                source_name=f"derived:{channel}",
+                canonical_name=channel,
+                sampling_rate=target_rate,
+                signal=signal.astype(np.float32, copy=False),
+            )
+            derived_channels.append(channel)
+
+        approximation_rules: dict[str, tuple[str, ...]] = {
+            "T6": ("T4", "Fp2"),
+            "P4": ("T4", "T6"),
+            "F3": ("Fp1", "F7"),
+            "C3": ("F7", "T3"),
+            "P3": ("T3", "T5"),
+            "F4": ("Fp2", "F8"),
+            "C4": ("F8", "T4"),
+            "Fz": ("F3", "F4"),
+            "Cz": ("C3", "C4"),
+            "Pz": ("P3", "P4"),
+        }
+        for channel, parents in approximation_rules.items():
+            if channel in traces:
+                continue
+            available = [traces[parent].signal for parent in parents if parent in traces]
+            if not available:
+                continue
+            approximated = np.mean(np.stack(available, axis=0), axis=0).astype(np.float32, copy=False)
+            traces[channel] = ChannelTrace(
+                source_name=f"approx:{'+'.join(parent for parent in parents if parent in traces)}",
+                canonical_name=channel,
+                sampling_rate=target_rate,
+                signal=approximated,
+            )
+            approximated_channels.append(channel)
+
+        messages = [
+            "The EDF appears to use bipolar channel labels. The system converted the montage heuristically into the fixed referential model input.",
+            f"Derived channels from bipolar chains: {len(derived_channels)}.",
+        ]
+        if approximated_channels:
+            messages.append(
+                "Approximated channels were synthesized from neighboring bipolar chains: "
+                + ", ".join(approximated_channels[:8])
+                + "."
+            )
+
+        return MontageConversionResult(
+            traces_by_channel=traces,
+            input_montage_type="bipolar",
+            conversion_status="converted" if traces else "blocked",
+            conversion_messages=messages,
+            derived_channels=derived_channels,
+            approximated_channels=approximated_channels,
+        )
+
+    def _build_bipolar_edge_signals(
+        self,
+        *,
+        raw_trace_map: dict[str, ChannelTrace],
+        expected_samples: int,
+        target_rate: float,
+    ) -> dict[tuple[str, str], np.ndarray]:
+        edges: dict[tuple[str, str], np.ndarray] = {}
+        for trace in raw_trace_map.values():
+            pair = self._parse_bipolar_pair(trace.source_name) or self._parse_bipolar_pair(trace.canonical_name)
+            if pair is None:
+                continue
+            left, right = pair
+            resampled = self._fit_length(self._resample_signal(trace.signal, trace.sampling_rate, target_rate), expected_samples)
+            edges[(left, right)] = resampled.astype(np.float32, copy=False)
+        return edges
+
+    def _solve_component_potentials(
+        self,
+        edge_signals: dict[tuple[str, str], np.ndarray],
+        expected_samples: int,
+    ) -> dict[str, np.ndarray]:
+        graph: dict[str, list[tuple[str, int, np.ndarray]]] = defaultdict(list)
+        for (left, right), signal in edge_signals.items():
+            graph[left].append((right, 1, signal))
+            graph[right].append((left, -1, signal))
+
+        potentials: dict[str, np.ndarray] = {}
+        visited: set[str] = set()
+        for node in sorted(graph):
+            if node in visited:
+                continue
+            component_nodes = self._component_nodes(graph, node)
+            visited.update(component_nodes)
+            anchor = next((candidate for candidate in ("O1", "O2", "Pz", "Cz") if candidate in component_nodes), sorted(component_nodes)[0])
+            potentials[anchor] = np.zeros(expected_samples, dtype=np.float32)
+            queue: deque[str] = deque([anchor])
+            while queue:
+                current = queue.popleft()
+                current_signal = potentials[current]
+                for neighbor, direction, signal in graph[current]:
+                    if neighbor in potentials:
+                        continue
+                    if direction == 1:
+                        neighbor_signal = current_signal - signal
+                    else:
+                        neighbor_signal = current_signal + signal
+                    potentials[neighbor] = neighbor_signal.astype(np.float32, copy=False)
+                    queue.append(neighbor)
+        return potentials
+
+    def _component_nodes(self, graph: dict[str, list[tuple[str, int, np.ndarray]]], start: str) -> set[str]:
+        seen: set[str] = set()
+        queue: deque[str] = deque([start])
+        while queue:
+            node = queue.popleft()
+            if node in seen:
+                continue
+            seen.add(node)
+            for neighbor, _, _ in graph[node]:
+                if neighbor not in seen:
+                    queue.append(neighbor)
+        return seen
+
+    def _parse_bipolar_pair(self, value: str) -> tuple[str, str] | None:
+        cleaned = value.strip()
+        if "-" not in cleaned:
+            return None
+        parts = [self._canonical_channel_name(part.strip()) for part in cleaned.split("-") if part.strip()]
+        if len(parts) < 2:
+            return None
+        left, right = parts[0], parts[1]
+        known = set(self.required_channel_order) | {"O2", "A1", "A2"}
+        if left not in known or right not in known:
+            return None
+        return left, right
+
+    def _resample_signal(self, signal: np.ndarray, source_rate: float, target_rate: float) -> np.ndarray:
+        signal = np.asarray(signal, dtype=np.float32)
+        if signal.size == 0:
+            return np.zeros(self.config.default_window_size, dtype=np.float32)
+        if source_rate <= 0 or abs(source_rate - target_rate) < 1e-6:
+            return signal.astype(np.float32, copy=False)
+        duration_sec = signal.shape[0] / source_rate
+        target_length = max(int(round(duration_sec * target_rate)), 1)
+        source_times = np.linspace(0.0, duration_sec, signal.shape[0], endpoint=False, dtype=np.float32)
+        target_times = np.linspace(0.0, duration_sec, target_length, endpoint=False, dtype=np.float32)
+        return np.interp(target_times, source_times, signal).astype(np.float32)
+
+    def _fit_length(self, signal: np.ndarray, expected_samples: int) -> np.ndarray:
+        if signal.shape[0] == expected_samples:
+            return signal.astype(np.float32, copy=False)
+        if signal.shape[0] > expected_samples:
+            return signal[:expected_samples].astype(np.float32, copy=False)
+        padded = np.zeros(expected_samples, dtype=np.float32)
+        padded[: signal.shape[0]] = signal
+        return padded
 
     def _canonical_channel_name(self, value: str) -> str:
         cleaned = (
@@ -556,3 +860,19 @@ class EEGIntakeService:
         canonical = self._canonical_channel_name(stripped).strip().upper()
         canonical_compact = "".join(character for character in canonical if character.isalnum())
         return {stripped.casefold(), compact.casefold(), canonical.casefold(), canonical_compact.casefold()}
+
+    def _looks_like_bipolar_montage(self, channel_names: Sequence[str]) -> bool:
+        known = {name.upper() for name in COMMON_CHANNEL_ALIASES}
+        matched = 0
+        for channel_name in channel_names:
+            cleaned = channel_name.strip().upper().replace("EEG", "").replace(" ", "")
+            if "-" not in cleaned:
+                continue
+            left, right, *_ = cleaned.split("-") + ["", ""]
+            left = left.replace("REF", "").replace("LE", "")
+            right = right.replace("REF", "").replace("LE", "")
+            if left in known and right in known:
+                matched += 1
+            if matched >= 3:
+                return True
+        return False

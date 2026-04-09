@@ -16,3 +16,4 @@ def test_report_detail_is_available_after_successful_analysis(client, case_paylo
     assert report_response.status_code == 200
     report_payload = report_response.json()
     assert report_payload["report"]["report_id"] == report_id
+    assert len(report_payload["model_comparisons"]) == 4

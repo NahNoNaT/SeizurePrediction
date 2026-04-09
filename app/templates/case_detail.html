@@ -46,6 +46,49 @@
     </article>
 </section>
 
+{% if case_detail.recording %}
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Recording intake</p>
+            <h2>Montage and conversion status</h2>
+        </div>
+    </div>
+    <div class="meta-grid">
+        <div>
+            <span class="meta-label">Input montage</span>
+            <strong>{{ case_detail.recording.input_montage_type|title }}</strong>
+        </div>
+        <div>
+            <span class="meta-label">Conversion</span>
+            <strong>{{ case_detail.recording.conversion_status|title }}</strong>
+        </div>
+        <div>
+            <span class="meta-label">Derived channels</span>
+            <strong>{{ case_detail.recording.derived_channels|length }}</strong>
+        </div>
+        <div>
+            <span class="meta-label">Approximated channels</span>
+            <strong>{{ case_detail.recording.approximated_channels|length }}</strong>
+        </div>
+    </div>
+    {% if case_detail.recording.conversion_messages %}
+    <div class="message-list top-gap">
+        {% for message in case_detail.recording.conversion_messages %}
+        <div class="message-item">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if case_detail.recording.validation_messages %}
+    <div class="message-list">
+        {% for message in case_detail.recording.validation_messages %}
+        <div class="message-item">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+
 <section class="panel">
     <div class="panel-header">
         <div>
@@ -78,6 +121,94 @@
             </article>
         </div>
     </div>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <p class="eyebrow">Model comparison</p>
+            <h2>Per-model analysis comparison</h2>
+        </div>
+    </div>
+    {% if case_detail.model_comparisons %}
+    <p class="chart-note">Compare the ensemble decision against each configured AI model. Confidence reflects how decisively that model scored the recording and how closely it matched the consensus profile.</p>
+    <div class="table-wrap">
+        <table class="data-table compact-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Status</th>
+                    <th>Risk</th>
+                    <th>Confidence</th>
+                    <th>Agreement</th>
+                    <th>Priority</th>
+                    <th>Flagged Segments</th>
+                    <th>Runtime</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for model in case_detail.model_comparisons %}
+                <tr>
+                    <td>
+                        <strong>{{ model.model_label }}</strong>
+                        <div class="table-subtext">{{ model.model_version or "Unknown version" }}</div>
+                    </td>
+                    <td>
+                        {% if model.status == "COMPLETED" %}
+                        <span class="badge badge-success">Completed</span>
+                        {% else %}
+                        <span class="badge badge-muted">Failed</span>
+                        <div class="table-subtext">{{ model.failure_message or "This model did not return a usable result." }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if model.overall_risk %}
+                        <span class="badge badge-{{ model.overall_risk|lower }}">{{ model.overall_risk }}</span>
+                        <div class="table-subtext">{{ "%.0f"|format((model.estimated_seizure_risk or 0) * 100) }}%</div>
+                        {% else %}
+                        <span class="badge badge-muted">Unavailable</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if model.confidence_score is not none %}
+                        <span class="badge badge-{{ model.confidence_label|lower }}">{{ model.confidence_label }}</span>
+                        <div class="table-subtext">{{ "%.0f"|format(model.confidence_score * 100) }}%</div>
+                        {% else %}
+                        <span class="badge badge-muted">Unavailable</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if model.agreement_score is not none %}
+                        {{ "%.0f"|format(model.agreement_score * 100) }}%
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td>{{ model.review_priority or "-" }}</td>
+                    <td>{{ model.flagged_segments_count }}</td>
+                    <td>
+                        {% if model.inference_time_seconds is not none %}
+                        {{ "%.3f"|format(model.inference_time_seconds) }}s
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state subtle-empty">
+        {% if case_detail.recording and case_detail.recording.validation_status == "BLOCKED" %}
+        <h3>Analysis blocked before model comparison</h3>
+        <p>This recording was saved, but the current montage could not be converted into a model-ready input with sufficient coverage, so none of the configured models were run.</p>
+        {% else %}
+        <h3>No model comparison available</h3>
+        <p>The comparison table will appear after the recording has been analyzed by the configured model set.</p>
+        {% endif %}
+    </div>
+    {% endif %}
 </section>
 
 <section class="panel">
@@ -125,7 +256,7 @@
             <span class="waveform-status" data-waveform-status>Loading EEG preview...</span>
             <span class="waveform-channel-summary" data-waveform-channel-summary></span>
         </div>
-        <div class="waveform-plot chart-canvas" data-waveform-plot aria-label="EEG waveform preview"></div>
+        <div class="waveform-plot" data-waveform-plot aria-label="EEG waveform preview"></div>
         <div class="message-list" data-waveform-messages hidden></div>
     </div>
     {% else %}
@@ -243,6 +374,10 @@
             <li>
                 <span>Recording duration</span>
                 <strong>{{ recording_duration_label }}</strong>
+            </li>
+            <li>
+                <span>Validation status</span>
+                <strong>{{ case_detail.recording.validation_status if case_detail.recording else "Unavailable" }}</strong>
             </li>
             <li>
                 <span>Report status</span>

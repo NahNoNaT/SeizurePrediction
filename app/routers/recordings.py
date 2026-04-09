@@ -39,7 +39,7 @@ async def api_upload_recording(request: Request, case_id: str, eeg_file: UploadF
         )
         case_store.update_case_status(case_id, "UPLOADED", upload["created_at"])
 
-        intake = workflow_service.inspect_recording(upload_path, clinician_mode=True)
+        intake = workflow_service.inspect_recording(upload_path, clinician_mode=True, enforce_validation=False)
         recording = workflow_service.build_recording_overview(
             recording_id=str(uuid4()),
             case_id=case_id,
@@ -49,14 +49,18 @@ async def api_upload_recording(request: Request, case_id: str, eeg_file: UploadF
             uploaded_at=upload["created_at"],
         )
         case_store.create_recording(recording)
+        if recording.validation_status != "VALIDATED":
+            case_store.update_case_status(case_id, "FAILED", upload["created_at"])
+            return CreateRecordingResponse(
+                recording=recording,
+                message="EEG recording uploaded, but validation blocked analysis for this file.",
+            )
         case_store.update_case_status(case_id, "VALIDATED", upload["created_at"])
         return CreateRecordingResponse(recording=recording, message="EEG recording uploaded and validated.")
     except HTTPException as exc:
         case_store.update_case_status(case_id, "FAILED", datetime.now(timezone.utc))
         raise exc
     except EEGValidationError as exc:
-        if upload_path and upload_path.exists():
-            upload_path.unlink(missing_ok=True)
         case_store.update_case_status(case_id, "FAILED", datetime.now(timezone.utc))
         raise app_http_exception(400, exc.code, exc.public_detail) from exc
     except Exception as exc:

@@ -22,6 +22,7 @@ def persist_analysis_bundle(
         run_result.assessment.analysis,
         run_result.assessment.segment_results,
         run_result.assessment.high_risk_intervals,
+        model_comparisons=run_result.model_comparisons,
         trace_json=run_result.trace_json,
         case_status=run_result.assessment.case_status,
     )

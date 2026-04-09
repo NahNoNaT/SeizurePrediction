@@ -83,7 +83,7 @@ class SignalPreprocessingService:
         )
 
     def map_channels(self, *, intake: EEGIntakeResult, expected_samples: int) -> tuple[np.ndarray, list[str]]:
-        notes: list[str] = []
+        notes: list[str] = list(intake.conversion_messages)
         channels: list[np.ndarray] = []
         missing_channels: list[str] = []
 
@@ -109,6 +109,19 @@ class SignalPreprocessingService:
             logger.info(
                 "Zero-filled validated missing channels",
                 extra={"event": "preprocessing_zero_fill", "status": "VALIDATED"},
+            )
+
+        if intake.input_montage_type == "bipolar":
+            notes.append(
+                "The uploaded EEG used a bipolar montage and was converted heuristically into the fixed model input channel order."
+            )
+        if intake.derived_channels:
+            notes.append(
+                f"Derived channels from bipolar chains: {', '.join(intake.derived_channels[:10])}."
+            )
+        if intake.approximated_channels:
+            notes.append(
+                f"Approximated channels from neighboring bipolar signals: {', '.join(intake.approximated_channels[:10])}."
             )
 
         notes.append(

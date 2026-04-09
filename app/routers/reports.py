@@ -97,5 +97,6 @@ async def api_report_detail(request: Request, report_id: str) -> ReportDetailRes
         case=build_case_summary(detail),
         recording=detail.recording,
         analysis=detail.analysis,
+        model_comparisons=detail.model_comparisons,
         high_risk_intervals=detail.high_risk_intervals,
     )

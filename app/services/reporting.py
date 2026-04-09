@@ -62,6 +62,22 @@ class ClinicalReportService:
         if not interval_rows:
             interval_rows = '<tr><td colspan="5">No high-risk intervals were identified in this analysis.</td></tr>'
 
+        comparison_rows = "".join(
+            (
+                "<tr>"
+                f"<td>{escape(model.model_label)}</td>"
+                f"<td>{escape(model.status)}</td>"
+                f"<td>{escape(model.overall_risk or 'Unavailable')}</td>"
+                f"<td>{(model.estimated_seizure_risk or 0.0) * 100:.0f}%</td>"
+                f"<td>{escape(model.confidence_label or 'Unavailable')}</td>"
+                f"<td>{(model.confidence_score or 0.0) * 100:.0f}%</td>"
+                "</tr>"
+            )
+            for model in case_detail.model_comparisons
+        )
+        if not comparison_rows:
+            comparison_rows = '<tr><td colspan="6">No per-model comparison results were saved for this analysis.</td></tr>'
+
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -90,6 +106,8 @@ class ClinicalReportService:
     <div class="card"><strong>Analysis Date</strong><br>{case_detail.analysis.created_at.isoformat()}</div>
     <div class="card"><strong>Recording File</strong><br>{escape(case_detail.recording.file_name)}</div>
     <div class="card"><strong>Recording Duration</strong><br>{case_detail.recording.duration_sec / 60.0:.1f} minutes</div>
+    <div class="card"><strong>Input Montage</strong><br>{escape(case_detail.recording.input_montage_type.title())}</div>
+    <div class="card"><strong>Conversion Status</strong><br>{escape(case_detail.recording.conversion_status.title())}</div>
     <div class="card"><strong>Overall Risk</strong><br>{escape(case_detail.analysis.overall_risk)}</div>
     <div class="card"><strong>Review Priority</strong><br>{escape(case_detail.analysis.review_priority)}</div>
   </div>
@@ -99,6 +117,9 @@ class ClinicalReportService:
 
   <h2>Clinical Interpretation</h2>
   <p>{escape(case_detail.analysis.interpretation)}</p>
+
+  <h2>Input Montage Notes</h2>
+  <p>{escape(" ".join(case_detail.recording.conversion_messages) or "Referential montage was used directly for inference.")}</p>
 
   <h2>High-Risk Intervals</h2>
   <table>
@@ -113,6 +134,23 @@ class ClinicalReportService:
     </thead>
     <tbody>
       {interval_rows}
+    </tbody>
+  </table>
+
+  <h2>Model Comparison</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Status</th>
+        <th>Risk</th>
+        <th>Risk Score</th>
+        <th>Confidence</th>
+        <th>Confidence Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      {comparison_rows}
     </tbody>
   </table>
 

@@ -20,6 +20,9 @@ from app.schemas import (
     ModelSlotStatus,
     RecordingOverview,
     RecordingPreviewResponse,
+    ReplaySessionStateResponse,
+    ReplayTimelinePoint,
+    ReplayUploadResponse,
     ReportSummary,
 )
 from app.services.clinical import ClinicalDecisionService
@@ -31,7 +34,8 @@ from app.services.temporal import TemporalAnalysisService
 
 
 class FakeInferenceService:
-    def __init__(self, status: str = "model_ready"):
+    def __init__(self, project_root: Path, status: str = "model_ready"):
+        self.project_root = project_root
         self.status = status
 
     def warmup(self) -> None:
@@ -49,7 +53,7 @@ class FakeInferenceService:
         runtime_config.inference_status = self.status
 
     def model_slot_statuses(self) -> list[ModelSlotStatus]:
-        paths = list(runtime_config.configured_checkpoint_paths())
+        paths = list(runtime_config.configured_checkpoint_paths(self.project_root))
         return [
             ModelSlotStatus(
                 model_key=f"model_{index}",
@@ -72,11 +76,13 @@ class FakeWorkflowService:
         fail_analysis: bool = False,
         failure_code: str = "model_unavailable",
         recording_mode: str = "referential",
+        segment_count: int = 3,
     ):
         self.project_root = project_root
         self.fail_analysis = fail_analysis
         self.failure_code = failure_code
         self.recording_mode = recording_mode
+        self.segment_count = max(segment_count, 1)
         self.temporal_service = TemporalAnalysisService(runtime_config)
         self.clinical_service = ClinicalDecisionService(runtime_config)
         self.reports_dir = project_root / "reports"
@@ -239,8 +245,16 @@ class FakeWorkflowService:
                 trace_json={"backend_status": self.failure_code, "failure_code": self.failure_code},
             )
 
-        segment_times = [(0.0, 5.0), (2.5, 7.5), (5.0, 10.0)]
-        risk_scores = np.array([0.18, 0.82, 0.84], dtype=np.float32)
+        if self.segment_count == 3:
+            segment_times = [(0.0, 5.0), (2.5, 7.5), (5.0, 10.0)]
+            risk_scores = np.array([0.18, 0.82, 0.84], dtype=np.float32)
+        else:
+            hop_seconds = runtime_config.default_window_length_seconds - runtime_config.default_overlap_seconds
+            segment_times = [
+                (index * hop_seconds, index * hop_seconds + runtime_config.default_window_length_seconds)
+                for index in range(self.segment_count)
+            ]
+            risk_scores = np.full(self.segment_count, 0.82, dtype=np.float32)
         temporal = self.temporal_service.analyze(risk_scores, segment_times)
         assessment = self.clinical_service.build_assessment(
             case_id=case_id,
@@ -437,25 +451,105 @@ class FakeWorkflowService:
         )
 
 
+class FakeReplayService:
+    def __init__(self):
+        self._sessions: dict[str, ReplaySessionStateResponse] = {}
+
+    def create_session(self, *, file_path: Path, file_name: str) -> ReplayUploadResponse:
+        session_id = str(uuid4())
+        state = ReplaySessionStateResponse(
+            session_id=session_id,
+            file_name=file_name,
+            status="uploaded",
+            total_duration_sec=60.0,
+            sampling_rate=256.0,
+            window_sec=10.0,
+            hop_sec=2.5,
+            replay_speed=5.0,
+            available_channels=["Fp1-F7", "F7-T3", "T3-T5"],
+            processed_windows=0,
+            total_windows=0,
+            replay_position_sec=0.0,
+            latest_risk_score=None,
+            latest_top_channel=None,
+            error=None,
+            timeline=[],
+        )
+        self._sessions[session_id] = state
+        return ReplayUploadResponse(
+            session_id=session_id,
+            file_name=file_name,
+            status="uploaded",
+            total_duration_sec=60.0,
+            sampling_rate=256.0,
+            available_channels=state.available_channels,
+            message="EDF replay session created. Start replay to stream sliding-window risk scores.",
+        )
+
+    def start_session(self, session_id: str, *, window_sec: float, hop_sec: float, replay_speed: float) -> ReplaySessionStateResponse:
+        state = self._sessions[session_id]
+        updated = state.model_copy(
+            update={
+                "status": "running",
+                "window_sec": window_sec,
+                "hop_sec": hop_sec,
+                "replay_speed": replay_speed,
+                "processed_windows": 1,
+                "total_windows": 24,
+                "replay_position_sec": window_sec,
+                "latest_risk_score": 0.83,
+                "latest_top_channel": "Fp1-F7",
+                "timeline": [
+                    ReplayTimelinePoint(
+                        window_index=0,
+                        start_sec=0.0,
+                        end_sec=window_sec,
+                        risk_score=0.83,
+                        risk_label="High",
+                        is_flagged=True,
+                        top_channel="Fp1-F7",
+                    )
+                ],
+            }
+        )
+        self._sessions[session_id] = updated
+        return updated
+
+    def stop_session(self, session_id: str) -> ReplaySessionStateResponse:
+        state = self._sessions[session_id].model_copy(update={"status": "stopped"})
+        self._sessions[session_id] = state
+        return state
+
+    def get_session_state(self, session_id: str) -> ReplaySessionStateResponse:
+        return self._sessions[session_id]
+
+
 def build_test_app(
     tmp_path: Path,
     *,
     fail_analysis: bool = False,
     failure_code: str = "model_unavailable",
     recording_mode: str = "referential",
+    segment_count: int = 3,
 ):
     case_store = ClinicalCaseStore(tmp_path / "clinical_cases.db")
-    inference_service = FakeInferenceService(status="model_unavailable" if fail_analysis else "model_ready")
+    inference_service = FakeInferenceService(
+        tmp_path,
+        status="model_unavailable" if fail_analysis else "model_ready",
+    )
+    replay_service = FakeReplayService()
     workflow_service = FakeWorkflowService(
         tmp_path,
         fail_analysis=fail_analysis,
         failure_code=failure_code,
         recording_mode=recording_mode,
+        segment_count=segment_count,
     )
     app = create_app(
         case_store=case_store,
         inference_service=inference_service,  # type: ignore[arg-type]
         workflow_service=workflow_service,  # type: ignore[arg-type]
+        replay_service=replay_service,  # type: ignore[arg-type]
     )
     uploads_dir = tmp_path / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)

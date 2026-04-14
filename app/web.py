@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeVar
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -10,6 +11,11 @@ from fastapi.responses import RedirectResponse
 
 from app.config import RuntimeConfig
 from app.schemas import AnalysisResponse, CaseDetail, CaseSummary, TimelinePoint
+
+UPLOAD_CHUNK_SIZE_BYTES = 8 * 1024 * 1024
+CASE_DETAIL_MAX_CHART_POINTS = 600
+CASE_DETAIL_MAX_SEGMENT_ROWS = 200
+T = TypeVar("T")
 
 
 def app_http_exception(status_code: int, code: str, detail: str) -> HTTPException:
@@ -94,6 +100,26 @@ def format_time_label(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+def downsample_items(items: list[T], max_items: int) -> list[T]:
+    if max_items <= 0 or not items:
+        return []
+    if len(items) <= max_items:
+        return items
+    if max_items == 1:
+        return [items[-1]]
+
+    last_index = len(items) - 1
+    sampled: list[T] = []
+    previous_index = -1
+    for index in range(max_items):
+        resolved_index = round(index * last_index / (max_items - 1))
+        if resolved_index == previous_index:
+            continue
+        sampled.append(items[resolved_index])
+        previous_index = resolved_index
+    return sampled
+
+
 def timeline_from_segments(segment_results) -> list[TimelinePoint]:
     return [
         TimelinePoint(
@@ -108,14 +134,19 @@ def timeline_from_segments(segment_results) -> list[TimelinePoint]:
     ]
 
 
-def chart_points_from_timeline(timeline: list[TimelinePoint]) -> list[dict[str, str | float | bool]]:
+def chart_points_from_timeline(
+    timeline: list[TimelinePoint],
+    *,
+    max_points: int | None = None,
+) -> list[dict[str, str | float | bool]]:
+    points = downsample_items(timeline, max_points) if max_points is not None else timeline
     return [
         {
             "label": format_time_label(point.start_sec),
             "value": point.risk_score,
             "highlight": point.is_flagged,
         }
-        for point in timeline
+        for point in points
     ]
 
 
@@ -136,21 +167,38 @@ async def save_upload(
         allowed = ", ".join(allowed_extensions)
         raise app_http_exception(400, "unsupported_file_type", f"Supported EEG recording types are: {allowed}.")
 
-    payload = await upload_file.read()
-    size_bytes = len(payload)
-    if size_bytes == 0:
-        raise app_http_exception(400, "empty_file", "The uploaded EEG recording is empty.")
-    if size_bytes > config.max_upload_size_bytes:
-        raise app_http_exception(
-            413,
-            "file_too_large",
-            f"EEG file exceeds the {config.max_upload_size_mb} MB upload limit.",
-        )
-
     upload_id = str(uuid4())
     stored_filename = f"{sanitize_filename(original_name)}-{upload_id[:8]}{extension}"
     upload_path = uploads_dir / stored_filename
-    upload_path.write_bytes(payload)
+
+    size_bytes = 0
+    try:
+        with upload_path.open("wb") as output_file:
+            while True:
+                chunk = await upload_file.read(UPLOAD_CHUNK_SIZE_BYTES)
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                if size_bytes > config.max_upload_size_bytes:
+                    raise app_http_exception(
+                        413,
+                        "file_too_large",
+                        f"EEG file exceeds the {config.max_upload_size_mb} MB upload limit.",
+                    )
+                output_file.write(chunk)
+    except HTTPException:
+        upload_path.unlink(missing_ok=True)
+        raise
+    except Exception:
+        upload_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await upload_file.close()
+
+    if size_bytes == 0:
+        upload_path.unlink(missing_ok=True)
+        raise app_http_exception(400, "empty_file", "The uploaded EEG recording is empty.")
+
     upload = {
         "upload_id": upload_id,
         "filename": original_name,

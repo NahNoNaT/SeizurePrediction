@@ -13,10 +13,13 @@ from app.dependencies import get_case_store, get_workflow_service
 from app.schemas import CaseCreateRequest, CaseDetail, CaseSummary, CreateCaseResponse, DeleteCaseResponse
 from app.services.errors import EEGValidationError
 from app.web import (
+    CASE_DETAIL_MAX_CHART_POINTS,
+    CASE_DETAIL_MAX_SEGMENT_ROWS,
     app_http_exception,
     build_case_summary,
     build_redirect,
     chart_points_from_timeline,
+    downsample_items,
     format_duration_label,
     page_context,
     save_upload,
@@ -175,6 +178,7 @@ async def case_detail_page(request: Request, case_id: str) -> HTMLResponse:
         raise app_http_exception(404, "case_not_found", "Case not found.")
 
     analysis_state = workflow_service.build_case_analysis_state(case_detail)
+    display_segments = downsample_items(analysis_state.segments, CASE_DETAIL_MAX_SEGMENT_ROWS)
     return templates.TemplateResponse(
         request=request,
         name="case_detail.html",
@@ -186,10 +190,17 @@ async def case_detail_page(request: Request, case_id: str) -> HTMLResponse:
             extra={
                 "case_detail": case_detail,
                 "analysis_state": analysis_state,
+                "display_segments": display_segments,
+                "display_segment_count": len(display_segments),
+                "total_segment_count": len(analysis_state.segments),
+                "chart_segment_count": len(analysis_state.timeline),
                 "recording_duration_label": format_duration_label(
                     case_detail.recording.duration_sec if case_detail.recording else 0.0
                 ),
-                "chart_points": chart_points_from_timeline(analysis_state.timeline),
+                "chart_points": chart_points_from_timeline(
+                    analysis_state.timeline,
+                    max_points=CASE_DETAIL_MAX_CHART_POINTS,
+                ),
             },
         ),
     )

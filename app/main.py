@@ -11,10 +11,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config import configure_logging, runtime_config
-from app.routers import admin, analyses, cases, pages, recordings, reports
+from app.routers import admin, analyses, cases, demo, pages, recordings, replay, reports
 from app.schemas import ErrorResponse
 from app.services.clinical_workflow import ClinicalAnalysisService
 from app.services.inference import SeizureInferenceService
+from app.services.legacy_joblib import LegacyJoblibPredictionService
+from app.services.replay import ReplaySessionService
 from app.services.store import ClinicalCaseStore
 
 configure_logging(runtime_config.log_level)
@@ -30,6 +32,7 @@ def create_app(
     case_store: ClinicalCaseStore | None = None,
     inference_service: SeizureInferenceService | None = None,
     workflow_service: ClinicalAnalysisService | None = None,
+    replay_service: ReplaySessionService | None = None,
 ) -> FastAPI:
     uploads_dir = config.uploads_directory(PROJECT_ROOT)
     data_dir = config.data_directory(PROJECT_ROOT)
@@ -46,7 +49,9 @@ def create_app(
         inference_service=resolved_inference_service,
         config=config,
     )
+    resolved_legacy_service = LegacyJoblibPredictionService(project_root=PROJECT_ROOT)
     resolved_case_store = case_store or ClinicalCaseStore(database_file)
+    resolved_replay_service = replay_service or ReplaySessionService(project_root=PROJECT_ROOT, config=config)
     templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
     @asynccontextmanager
@@ -54,6 +59,7 @@ def create_app(
         logger.info("Application startup", extra={"event": "startup", "status": "starting"})
         resolved_case_store.initialize()
         resolved_inference_service.warmup()
+        resolved_legacy_service.warmup()
         logger.info("Application startup complete", extra={"event": "startup_complete", "status": config.inference_status})
         yield
 
@@ -67,7 +73,9 @@ def create_app(
     app.state.reports_dir = reports_dir
     app.state.case_store = resolved_case_store
     app.state.inference_service = resolved_inference_service
+    app.state.legacy_joblib_service = resolved_legacy_service
     app.state.workflow_service = resolved_workflow_service
+    app.state.replay_service = resolved_replay_service
     app.state.templates = templates
 
     @app.exception_handler(RequestValidationError)
@@ -88,7 +96,7 @@ def create_app(
         payload = ErrorResponse(code="server_error", detail=f"Unexpected server error: {exc}")
         return JSONResponse(status_code=500, content=payload.model_dump())
 
-    for router in (pages.router, cases.router, recordings.router, analyses.router, reports.router, admin.router):
+    for router in (pages.router, cases.router, recordings.router, analyses.router, reports.router, admin.router, demo.router, replay.router):
         app.include_router(router)
 
     return app

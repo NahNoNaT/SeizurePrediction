@@ -1,189 +1,113 @@
-# Clinical EEG Seizure Risk Assessment Platform
+# Seizure Prediction Web App (Checkpoint + Legacy Models)
 
-Doctor-facing FastAPI application for AI-assisted seizure prediction from scalp EEG recordings.
+This project supports two local prediction backends:
 
-The platform now uses an EDF-first clinical workflow:
+- `checkpoint/*.pkl` pipeline (`global_model_smart.pkl` + scaler/top_idx + feature extractor)
+- legacy `.joblib` ensembles discovered from:
 
-Create Case  
-→ Upload EDF recording  
-→ Validate EEG metadata  
-→ Review channel mapping  
-→ Preprocess and segment signal  
-→ Run seizure-risk inference  
-→ Apply temporal post-processing  
-→ Detect flagged EEG intervals  
-→ Generate clinical summary and report
+- `UNIVERSAL_LOPO_MODELS`
+- `LOSO_Models_Final`
 
-The clinician-facing interface is case-centered and avoids exposing machine-learning controls in the main workflow.
+Hugging Face model wrappers were removed from active usage.
 
-## Current architecture
+## Main routes
 
-### Core backend layers
+- `GET /demo`
+- `GET /health`
+- `POST /predict`
+- `GET /legacy/health`
+- `POST /legacy/predict`
+- `GET /replay`
 
-- `app/main.py`
-  - HTML pages for Dashboard, Cases, New Analysis, Reports, and Admin
-  - case-based API routes
-- `app/services/eeg_intake.py`
-  - EDF intake
-  - EDF header metadata parsing
-  - EDF waveform decoding
-  - channel mapping
-  - resampling and signal preparation for downstream analysis
-- `app/services/pipeline.py`
-  - preprocessing
-  - segmentation
-  - PyTorch inference
-  - probability timeline generation
-- `app/services/clinical_workflow.py`
-  - temporal smoothing
-  - consecutive high-risk decision rules
-  - segment-level risk labeling
-  - clinical interpretation and report scaffolding
-- `app/services/clinical_store.py`
-  - SQLite persistence for cases, recordings, analyses, segment results, and reports
+## Model source and selection
 
-## Data model
+The backend discovers models recursively:
 
-### Case
+- `UNIVERSAL_LOPO_MODELS/<FEATURE_SET>/*.joblib`
+- `LOSO_Models_Final/<SUBJECT_ID>/<FEATURE_SET>/*.joblib`
 
-- `id`
-- `patient_id`
-- `clinician_name`
-- `recording_date`
-- `notes`
-- `created_at`
+Supported feature sets:
 
-### Recording
+- `LBP`
+- `GLCM`
+- `COMBINED`
 
-- `id`
-- `case_id`
-- `file_name`
-- `file_path`
-- `duration_sec`
-- `sampling_rate`
-- `channel_count`
-- `channel_names`
-- `mapped_channels`
-- `uploaded_at`
+For exact `model_id`, call `GET /legacy/health`.
 
-### Analysis
+## Feature extractor integration
 
-- `id`
-- `case_id`
-- `recording_id`
-- `model_version`
-- `overall_risk`
-- `review_priority`
-- `max_risk_score`
-- `mean_risk_score`
-- `flagged_segments_count`
-- `clinical_summary`
-- `interpretation`
-- `created_at`
+Legacy prediction expects feature extraction from:
 
-### SegmentResult
+- `step1_extract_features.py`
+- `chb_mit_preprocess.py`
 
-- `id`
-- `analysis_id`
-- `segment_index`
-- `start_sec`
-- `end_sec`
-- `risk_score`
-- `risk_label`
-- `is_flagged`
+Default extractor path:
 
-### Report
+- `app/services/legacy_feature_extractor.py`
 
-- `id`
-- `analysis_id`
-- `case_id`
-- `report_path`
-- `generated_at`
+Custom override is supported via env:
 
-## Primary clinician workflow
+- `SEIZURE_LEGACY_FEATURE_EXTRACTOR=<module>:<attribute>`
 
-- EDF is the primary recording format in the doctor-facing workflow
-- `.npy`, `.npz`, and `.csv` remain available internally for backend/demo compatibility, but are not presented as the main clinical upload path
+Contract:
 
-## API structure
-
-- `POST /api/cases`
-- `GET /api/cases`
-- `GET /api/cases/{case_id}`
-- `POST /api/cases/{case_id}/recordings`
-- `POST /api/recordings/{recording_id}/analyze`
-- `GET /api/analyses/{analysis_id}`
-- `POST /api/analyses/{analysis_id}/report`
-
-Additional utility endpoints:
-
-- `GET /api/health`
-- `GET /api/model/info`
-- `POST /api/model/checkpoint`
-
-## Frontend page structure
-
-- `/dashboard`
-  - total analyses
-  - high-risk cases
-  - pending reviews
-  - recent analyses
-- `/cases`
-  - case history
-  - risk/date filters
-  - access to case detail
-- `/cases/new`
-  - patient metadata
-  - EDF upload
-  - run analysis
-- `/cases/{case_id}`
-  - patient info
-  - recording metadata
-  - estimated seizure risk
-  - review priority
-  - risk timeline
-  - flagged EEG segments
-  - interpretation panel
-- `/reports`
-  - generated analysis reports
-- `/admin`
-  - technical configuration hidden from clinicians
-
-## EDF intake behavior
-
-The current implementation includes an EDF intake layer that:
-
-- parses EDF header metadata
-- decodes waveform signals from EDF
-- extracts channel labels, signal count, estimated sampling rate, and duration
-- applies channel mapping
-- resamples signals to the configured analysis rate
-- prepares internal continuous EEG input for downstream segmentation and inference
-
-Current limitation:
-
-- if an EDF recording is missing required montage channels, missing mapped channels are zero-filled and reported in metadata status
-- the surrounding model checkpoint must still be present for full inference
-
-## Model checkpoint
-
-By default the app looks for a trained PyTorch checkpoint at:
-
-```text
-models/checkpoints/seizure_prediction_model.pt
+```python
+extract(prepared_segment=..., feature_set=..., edf_path=...) -> np.ndarray
 ```
 
-Override with:
+## Full-file scan mode
 
-```powershell
-$env:SEIZURE_MODEL_CHECKPOINT="D:\path\to\checkpoint.pt"
-```
+`POST /legacy/predict` supports scanning the full recording in one request:
 
-If no checkpoint is available:
+- `scan_full_file=true`
+- `scan_window_sec`
+- `scan_hop_sec`
+- `scan_start_sec`
+- `scan_end_sec`
+- `scan_max_windows`
 
-- the web app still runs
-- EDF upload and metadata intake still work
-- analysis endpoints return a clear `model_unavailable` response
+Response includes:
+
+- `scan.timeline` (window-by-window risk)
+- `scan.peak_window` (highest-risk window + model details)
+
+## Replay mode
+
+`/replay` uploads one EDF and streams sliding-window risk from a configured legacy model.
+
+Optional env:
+
+- `SEIZURE_REPLAY_LEGACY_MODEL_ID` (default: `universal:dt:combined`)
+
+## Benchmark fallback tuning
+
+When torch checkpoints are not configured, case analysis uses legacy scan mode
+from `UNIVERSAL_LOPO_MODELS` / `LOSO_Models_Final`.
+
+Tuning variables (used by legacy fallback scan):
+
+- `SEIZURE_BENCHMARK_SCAN_WINDOW_SEC` (default: `10`)
+- `SEIZURE_BENCHMARK_SCAN_HOP_SEC` (default: `10`)
+- `SEIZURE_BENCHMARK_SCAN_MAX_WINDOWS` (default: `2000`)
+- `SEIZURE_BENCHMARK_FLAG_THRESHOLD` (default: `0.60`)
+- `SEIZURE_BENCHMARK_MIN_CONSECUTIVE_WINDOWS` (default: `2`)
+- `SEIZURE_BENCHMARK_MIN_INTERVAL_SEC` (default: `20`)
+
+Checkpoint PKL artifacts expected in `checkpoint/` by default:
+
+- `global_model_smart.pkl`
+- `global_scaler.pkl`
+- `global_top_idx.pkl`
+- `feature_extractor.py`
+
+Optional env overrides:
+
+- `SEIZURE_PKL_CHECKPOINT_DIR`
+- `SEIZURE_PKL_MODEL_FILE`
+- `SEIZURE_PKL_SCALER_FILE`
+- `SEIZURE_PKL_TOP_IDX_FILE`
+- `SEIZURE_PKL_FEATURE_EXTRACTOR_FILE`
+- `SEIZURE_PKL_MAX_MISSING_CHANNELS` (default: `4`)
 
 ## Setup
 
@@ -193,7 +117,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## Run locally
+Run:
 
 ```powershell
 uvicorn app.main:app --reload
@@ -201,10 +125,10 @@ uvicorn app.main:app --reload
 
 Open:
 
-```text
-http://127.0.0.1:8000/dashboard
-```
+- `http://127.0.0.1:8000/demo`
+- `http://127.0.0.1:8000/replay`
 
-## Medical disclaimer
+## Notes
 
-This platform is for research and educational purposes only and does not replace professional medical diagnosis.
+- This app is for benchmarking/research workflow support, not clinical deployment.
+- Model probabilities are estimator outputs and are not jointly calibrated clinical risk.

@@ -253,7 +253,7 @@
             </div>
         </div>
         <div class="waveform-meta">
-            <span class="waveform-status" data-waveform-status>Loading EEG preview...</span>
+            <span class="waveform-status" data-waveform-status>Click Load Preview to render a short EEG window.</span>
             <span class="waveform-channel-summary" data-waveform-channel-summary></span>
         </div>
         <div class="waveform-plot" data-waveform-plot aria-label="EEG waveform preview"></div>
@@ -275,13 +275,18 @@
         </div>
     </div>
     <p class="chart-note">Use the timeline to see where seizure risk rises during the recording. Highlighted sections show periods that should receive closer review.</p>
+    {% if chart_segment_count > chart_points|length %}
+    <p class="chart-note">Display uses {{ chart_points|length }} sampled timeline points from {{ chart_segment_count }} total segments to keep the page responsive.</p>
+    {% endif %}
     {% if chart_points %}
-    <canvas
-        id="riskTimelineChart"
-        class="chart-canvas"
-        data-chart-label="Estimated seizure risk"
-        data-chart-points='{{ chart_points|tojson }}'
-    ></canvas>
+    <div class="chart-frame">
+        <canvas
+            id="riskTimelineChart"
+            class="chart-canvas"
+            data-chart-label="Estimated seizure risk"
+            data-chart-points='{{ chart_points|tojson }}'
+        ></canvas>
+    </div>
     {% elif analysis_state.status == "pending" %}
     <div class="empty-state subtle-empty">
         <h3>Timeline pending</h3>
@@ -403,6 +408,9 @@
             <h2>Flagged segment list</h2>
         </div>
     </div>
+    {% if total_segment_count > display_segment_count %}
+    <p class="chart-note">Showing {{ display_segment_count }} representative flagged segments sampled across {{ total_segment_count }} total flagged segments to keep the page responsive.</p>
+    {% endif %}
     <div class="table-wrap">
         <table class="data-table">
             <thead>
@@ -415,7 +423,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for segment in analysis_state.segments %}
+                {% for segment in display_segments %}
                 <tr class="{% if segment.is_flagged %}row-highlight{% endif %}">
                     <td>{{ segment.segment_index + 1 }}</td>
                     <td>{{ "%.2f"|format(segment.start_sec) }}s - {{ "%.2f"|format(segment.end_sec) }}s</td>

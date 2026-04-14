@@ -101,13 +101,19 @@ class RuntimeConfig(BaseModel):
     consecutive_segments_required: int = _get_int("SEIZURE_CONSECUTIVE_SEGMENTS_REQUIRED", 3)
     model_device_preference: str = os.getenv("SEIZURE_MODEL_DEVICE", "cpu")
     strict_checkpoint_loading: bool = _get_bool("SEIZURE_STRICT_CHECKPOINT_LOADING", True)
-    checkpoint_path: str | None = os.getenv("SEIZURE_MODEL_CHECKPOINT", "models/checkpoints/seizure_prediction_model.pt")
+    auto_discover_checkpoints: bool = _get_bool("SEIZURE_AUTO_DISCOVER_CHECKPOINTS", True)
+    checkpoint_path: str | None = os.getenv("SEIZURE_MODEL_CHECKPOINT")
     checkpoint_paths: tuple[str, ...] = _get_csv("SEIZURE_MODEL_CHECKPOINTS", ())
+    checkpoint_directory_name: str = os.getenv("SEIZURE_MODEL_CHECKPOINT_DIR", "models/checkpoints")
+    checkpoint_extensions: tuple[str, ...] = tuple(
+        extension.lower()
+        for extension in _get_csv("SEIZURE_MODEL_CHECKPOINT_EXTENSIONS", (".pt", ".pth", ".ckpt"))
+    )
     inference_status: str = "model_unavailable"
     supported_upload_extensions: tuple[str, ...] = (".edf",)
     clinician_upload_extensions: tuple[str, ...] = (".edf",)
     internal_demo_extensions: tuple[str, ...] = (".npy", ".npz", ".csv")
-    max_upload_size_mb: int = _get_int("SEIZURE_MAX_UPLOAD_SIZE_MB", 100)
+    max_upload_size_mb: int = _get_int("SEIZURE_MAX_UPLOAD_SIZE_MB", 2048)
     data_directory_name: str = "data"
     uploads_directory_name: str = "uploads"
     reports_directory_name: str = "reports"
@@ -137,20 +143,59 @@ class RuntimeConfig(BaseModel):
     def database_file(self, project_root: Path) -> Path:
         return self.data_directory(project_root) / self.database_file_name
 
-    def resolved_checkpoint_path(self, project_root: Path) -> Path | None:
-        if not self.checkpoint_path:
-            return None
-        path = Path(self.checkpoint_path)
+    def checkpoint_directory(self, project_root: Path) -> Path:
+        path = Path(self.checkpoint_directory_name)
         return path if path.is_absolute() else project_root / path
 
-    def configured_checkpoint_paths(self) -> tuple[str, ...]:
+    def explicit_checkpoint_paths(self) -> tuple[str, ...]:
         if self.checkpoint_paths:
             return tuple(path for path in self.checkpoint_paths if path)
         return (self.checkpoint_path,) if self.checkpoint_path else ()
 
+    def discovered_checkpoint_paths(self, project_root: Path) -> tuple[Path, ...]:
+        if not self.auto_discover_checkpoints:
+            return ()
+        checkpoint_directory = self.checkpoint_directory(project_root)
+        if not checkpoint_directory.exists() or not checkpoint_directory.is_dir():
+            return ()
+        allowed_extensions = {extension.lower() for extension in self.checkpoint_extensions}
+        discovered = sorted(
+            (
+                path
+                for path in checkpoint_directory.iterdir()
+                if path.is_file() and path.suffix.lower() in allowed_extensions
+            ),
+            key=lambda path: path.name.lower(),
+        )
+        return tuple(discovered)
+
+    def resolved_checkpoint_path(self, project_root: Path) -> Path | None:
+        configured_paths = self.configured_checkpoint_paths(project_root)
+        if not configured_paths:
+            return None
+        path = Path(configured_paths[0])
+        return path if path.is_absolute() else project_root / path
+
+    def configured_checkpoint_paths(self, project_root: Path | None = None) -> tuple[str, ...]:
+        explicit_paths = self.explicit_checkpoint_paths()
+        if explicit_paths:
+            return explicit_paths
+        if project_root is None:
+            return ()
+        configured_paths: list[str] = []
+        for path in self.discovered_checkpoint_paths(project_root):
+            if path.is_absolute():
+                try:
+                    configured_paths.append(path.relative_to(project_root).as_posix())
+                except ValueError:
+                    configured_paths.append(str(path))
+            else:
+                configured_paths.append(path.as_posix())
+        return tuple(configured_paths)
+
     def resolved_checkpoint_paths(self, project_root: Path) -> tuple[Path, ...]:
         resolved: list[Path] = []
-        for checkpoint_path in self.configured_checkpoint_paths():
+        for checkpoint_path in self.configured_checkpoint_paths(project_root):
             path = Path(checkpoint_path)
             resolved.append(path if path.is_absolute() else project_root / path)
         return tuple(resolved)

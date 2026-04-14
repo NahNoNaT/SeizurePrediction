@@ -37,22 +37,34 @@
     <article class="panel">
         <div class="panel-header">
             <div>
-                <p class="eyebrow">Service package</p>
-                <h2>Update clinical review package</h2>
+                <p class="eyebrow">Drop-in model folder</p>
+                <h2>Copy checkpoints into the model directory</h2>
             </div>
+        </div>
+
+        <div class="info-card info-card-calm">
+            <h3>Default behavior</h3>
+            <p>Copy `.pt`, `.pth`, or `.ckpt` files into <code>{{ admin_settings.checkpoint_directory }}</code>. The app auto-discovers every checkpoint in that folder at startup.</p>
+            {% if admin_settings.using_auto_discovery %}
+            <p>Current source: auto-discovery is active.</p>
+            {% elif admin_settings.auto_discovery_enabled %}
+            <p>Current source: manual checkpoint paths are overriding auto-discovery.</p>
+            {% else %}
+            <p>Current source: auto-discovery is disabled, so explicit checkpoint paths are required.</p>
+            {% endif %}
         </div>
 
         <form class="stack-form" method="post" action="/admin/checkpoint">
             <label>
-                <span>Checkpoint paths</span>
+                <span>Manual checkpoint paths</span>
                 <textarea
                     name="checkpoint_paths"
                     rows="6"
                     placeholder="D:\path\to\model-1.pt&#10;D:\path\to\model-2.pt&#10;D:\path\to\model-3.pt&#10;D:\path\to\model-4.pt"
-                    required
                 >{{ admin_settings.checkpoint_paths|join('\n') }}</textarea>
             </label>
-            <button type="submit" class="button button-primary">Update Models</button>
+            <p class="helper-text">Leave this box empty and submit to return to auto-discovery from <code>{{ admin_settings.checkpoint_directory }}</code>.</p>
+            <button type="submit" class="button button-primary">Apply Model Source</button>
         </form>
     </article>
 </section>
@@ -74,6 +86,14 @@
                 <tr>
                     <th>Review pattern</th>
                     <td>Consistent clinical review support</td>
+                </tr>
+                <tr>
+                    <th>Checkpoint directory</th>
+                    <td>{{ admin_settings.checkpoint_directory }}</td>
+                </tr>
+                <tr>
+                    <th>Accepted checkpoint types</th>
+                    <td>{{ admin_settings.checkpoint_extensions|join(', ') }}</td>
                 </tr>
                 <tr>
                     <th>Supported input modes</th>
@@ -139,7 +159,7 @@
     {% else %}
     <div class="empty-state subtle-empty">
         <h3>No model slots configured</h3>
-        <p>Add one or more checkpoint paths above to load model slots for comparison.</p>
+        <p>Copy a checkpoint into <code>{{ admin_settings.checkpoint_directory }}</code> or add manual paths above.</p>
     </div>
     {% endif %}
 </section>

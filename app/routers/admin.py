@@ -16,10 +16,16 @@ router = APIRouter()
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request) -> HTMLResponse:
     templates = request.app.state.templates
-    configured_paths = list(runtime_config.configured_checkpoint_paths())
+    project_root = request.app.state.project_root
+    configured_paths = list(runtime_config.configured_checkpoint_paths(project_root))
+    using_auto_discovery = not runtime_config.explicit_checkpoint_paths() and bool(configured_paths)
     admin_settings = AdminSettingsSummary(
-        checkpoint_path=runtime_config.checkpoint_path,
+        checkpoint_path=runtime_config.checkpoint_path or (configured_paths[0] if configured_paths else None),
         checkpoint_paths=configured_paths,
+        checkpoint_directory=str(runtime_config.checkpoint_directory(project_root)),
+        checkpoint_extensions=list(runtime_config.checkpoint_extensions),
+        auto_discovery_enabled=runtime_config.auto_discover_checkpoints,
+        using_auto_discovery=using_auto_discovery,
         model_version=runtime_config.default_model_version,
         backend_status=runtime_config.inference_status,
         model_device=runtime_config.model_device_preference,
@@ -53,14 +59,14 @@ async def admin_update_checkpoint(request: Request, checkpoint_paths: str = Form
     inference_service = get_inference_service(request)
     try:
         parsed_paths = [value.strip() for value in re.split(r"[\r\n,;]+", checkpoint_paths) if value.strip()]
-        if not parsed_paths:
-            raise ValueError("Please provide at least one checkpoint path.")
         runtime_config.checkpoint_paths = tuple(parsed_paths)
-        runtime_config.checkpoint_path = parsed_paths[0]
+        runtime_config.checkpoint_path = parsed_paths[0] if parsed_paths else None
         inference_service.load_models()
     except Exception as exc:
         return build_redirect("/admin", str(exc), "error")
-    return build_redirect("/admin", "Model checkpoint updated successfully.", "success")
+    if parsed_paths:
+        return build_redirect("/admin", "Model checkpoint updated successfully.", "success")
+    return build_redirect("/admin", "Manual checkpoint override cleared. Auto-discovery is active again.", "success")
 
 
 @router.get("/api/health")
@@ -73,7 +79,7 @@ async def health() -> dict[str, str]:
 
 
 @router.get("/api/model/info", response_model=AppMetadataResponse)
-async def model_info() -> AppMetadataResponse:
+async def model_info(request: Request) -> AppMetadataResponse:
     return AppMetadataResponse(
         app_title=runtime_config.app_title,
         app_subtitle=runtime_config.app_subtitle,
@@ -81,6 +87,6 @@ async def model_info() -> AppMetadataResponse:
         max_upload_size_mb=runtime_config.max_upload_size_mb,
         backend_status=runtime_config.inference_status,
         model_version=runtime_config.default_model_version,
-        configured_model_count=len(runtime_config.configured_checkpoint_paths()),
+        configured_model_count=len(runtime_config.configured_checkpoint_paths(request.app.state.project_root)),
         research_disclaimer=runtime_config.research_disclaimer,
     )

@@ -95,6 +95,51 @@ class RecordingPreviewResponse(BaseModel):
     signals: list[list[float]] = Field(default_factory=list)
 
 
+class ReplayUploadResponse(BaseModel):
+    session_id: str
+    file_name: str
+    status: str
+    total_duration_sec: float = Field(ge=0.0)
+    sampling_rate: float = Field(ge=0.0)
+    available_channels: list[str] = Field(default_factory=list)
+    message: str
+
+
+class ReplayStartRequest(BaseModel):
+    window_sec: float = Field(default=10.0, gt=0.0, le=60.0)
+    hop_sec: float = Field(default=2.5, gt=0.0, le=30.0)
+    replay_speed: float = Field(default=5.0, gt=0.0, le=60.0)
+
+
+class ReplayTimelinePoint(BaseModel):
+    window_index: int = Field(ge=0)
+    start_sec: float = Field(ge=0.0)
+    end_sec: float = Field(ge=0.0)
+    risk_score: float = Field(ge=0.0, le=1.0)
+    risk_label: ClinicalRiskCategory
+    is_flagged: bool
+    top_channel: str
+
+
+class ReplaySessionStateResponse(BaseModel):
+    session_id: str
+    file_name: str
+    status: str
+    total_duration_sec: float = Field(ge=0.0)
+    sampling_rate: float = Field(ge=0.0)
+    window_sec: float = Field(ge=0.0)
+    hop_sec: float = Field(ge=0.0)
+    replay_speed: float = Field(ge=0.0)
+    available_channels: list[str] = Field(default_factory=list)
+    processed_windows: int = Field(ge=0)
+    total_windows: int = Field(ge=0)
+    replay_position_sec: float = Field(ge=0.0)
+    latest_risk_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    latest_top_channel: str | None = None
+    error: str | None = None
+    timeline: list[ReplayTimelinePoint] = Field(default_factory=list)
+
+
 class SegmentResult(BaseModel):
     id: str
     analysis_id: str
@@ -235,6 +280,10 @@ CaseStatus = LifecycleStatus
 class AdminSettingsSummary(BaseModel):
     checkpoint_path: str | None = None
     checkpoint_paths: list[str] = Field(default_factory=list)
+    checkpoint_directory: str
+    checkpoint_extensions: list[str] = Field(default_factory=list)
+    auto_discovery_enabled: bool = True
+    using_auto_discovery: bool = False
     model_version: str
     backend_status: str
     model_device: str
@@ -257,6 +306,139 @@ class AppMetadataResponse(BaseModel):
     model_version: str
     configured_model_count: int = 0
     research_disclaimer: str
+
+
+class BenchmarkModelResult(BaseModel):
+    model_name: str
+    predicted_label: str
+    seizure_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    raw_score: float | None = None
+    inference_time_ms: float | None = Field(default=None, ge=0.0)
+    notes: str
+
+
+class BenchmarkEnsembleSummary(BaseModel):
+    majority_vote: str
+    average_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    num_models_predicting_seizure: int = Field(ge=0)
+    num_models_total: int = Field(ge=0)
+    confidence_note: str
+
+
+class DemoPredictionResponse(BaseModel):
+    selected_channel: str
+    sampling_rate: float = Field(ge=0.0)
+    duration_used_sec: float = Field(ge=0.0)
+    models: list[BenchmarkModelResult] = Field(default_factory=list)
+    ensemble_summary: BenchmarkEnsembleSummary
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DemoHealthResponse(BaseModel):
+    status: str
+    task_type: str
+    model_count: int = Field(ge=0)
+    models: list[dict[str, str]] = Field(default_factory=list)
+
+
+class LegacyCatalogEntry(BaseModel):
+    model_id: str
+    display_name: str
+    source: Literal["universal_lopo", "loso_final"]
+    subject_id: str | None = None
+    algorithm: str
+    feature_set: Literal["LBP", "GLCM", "COMBINED"]
+    model_path: str
+    scaler_path: str | None = None
+
+
+class LegacyPredictionSummary(BaseModel):
+    majority_vote: str
+    average_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    positive_votes: int = Field(ge=0)
+    total_models: int = Field(ge=0)
+    confidence_note: str
+
+
+class LegacyPredictionModelResult(BaseModel):
+    model_name: str
+    source: Literal["universal_lopo", "loso_final"]
+    subject_id: str | None = None
+    algorithm: str
+    feature_set: Literal["LBP", "GLCM", "COMBINED"]
+    predicted_label: str
+    positive_class_label: str
+    seizure_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    raw_score: float | None = None
+    inference_time_ms: float | None = Field(default=None, ge=0.0)
+    notes: str
+
+
+class LegacyScanTimelinePoint(BaseModel):
+    window_index: int = Field(ge=0)
+    start_sec: float = Field(ge=0.0)
+    end_sec: float = Field(ge=0.0)
+    average_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    majority_vote: str
+    positive_votes: int = Field(ge=0)
+    successful_models: int = Field(ge=0)
+    total_models: int = Field(ge=0)
+    top_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_model_name: str | None = None
+
+
+class LegacyScanPeakWindow(BaseModel):
+    window_index: int = Field(ge=0)
+    start_sec: float = Field(ge=0.0)
+    end_sec: float = Field(ge=0.0)
+    average_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    majority_vote: str
+    positive_votes: int = Field(ge=0)
+    successful_models: int = Field(ge=0)
+    total_models: int = Field(ge=0)
+    top_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_model_name: str | None = None
+    models: list[LegacyPredictionModelResult] = Field(default_factory=list)
+    summary: LegacyPredictionSummary
+
+
+class LegacyScanResult(BaseModel):
+    enabled: bool = False
+    total_duration_sec: float = Field(default=0.0, ge=0.0)
+    window_sec: float = Field(default=0.0, ge=0.0)
+    hop_sec: float = Field(default=0.0, ge=0.0)
+    window_count: int = Field(default=0, ge=0)
+    truncated: bool = False
+    timeline: list[LegacyScanTimelinePoint] = Field(default_factory=list)
+    peak_window: LegacyScanPeakWindow | None = None
+
+
+class LegacyPredictionResponse(BaseModel):
+    selected_channel: str
+    sampling_rate: float = Field(ge=0.0)
+    duration_used_sec: float = Field(ge=0.0)
+    source: Literal["universal_lopo", "loso_final"]
+    selected_model_id: str | None = None
+    matched_model_count: int = Field(ge=0)
+    subject_id: str | None = None
+    algorithm: str | None = None
+    feature_set: Literal["LBP", "GLCM", "COMBINED"] | None = None
+    models: list[LegacyPredictionModelResult] = Field(default_factory=list)
+    summary: LegacyPredictionSummary
+    warnings: list[str] = Field(default_factory=list)
+    scan: LegacyScanResult | None = None
+
+
+class LegacyHealthResponse(BaseModel):
+    status: str
+    task_type: str
+    model_count: int = Field(ge=0)
+    subjects: list[str] = Field(default_factory=list)
+    algorithms: list[str] = Field(default_factory=list)
+    feature_sets: list[str] = Field(default_factory=list)
+    counts_by_source: dict[str, int] = Field(default_factory=dict)
+    counts_by_subject: dict[str, int] = Field(default_factory=dict)
+    models: list[LegacyCatalogEntry] = Field(default_factory=list)
 
 
 class CreateCaseResponse(BaseModel):

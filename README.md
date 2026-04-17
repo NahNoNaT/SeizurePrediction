@@ -130,12 +130,18 @@ Open:
 
 ## Supabase + Vercel deployment
 
-1. Set `DATABASE_URL` to your Supabase Postgres connection string.
-2. Push this repository to GitHub (without large local model folders).
-3. Import the repo in Vercel and deploy with the included `vercel.json`.
-4. Add required environment variables in Vercel Project Settings:
-   - `DATABASE_URL`
-   - all required `SEIZURE_*` variables for your runtime.
+Use this production path:
+
+1. Deploy backend API to Render with Docker (`render.yaml` + `Dockerfile` are included).
+2. Set `DATABASE_URL` on Render to your Supabase Postgres connection string.
+3. Wait for Render to finish and copy backend URL (example: `https://your-backend-service.onrender.com`).
+4. Edit `vercel.json` and replace `https://your-backend-service.onrender.com` with your real Render URL.
+5. Deploy this repo on Vercel (Vercel acts as reverse proxy/domain only).
+
+Required env:
+
+- Render: `DATABASE_URL` (required), optional `SEIZURE_*` overrides.
+- Vercel: no Python runtime env needed for this proxy setup.
 
 When `DATABASE_URL` is present, the app uses Supabase Postgres automatically.
 Without `DATABASE_URL`, it falls back to local SQLite.

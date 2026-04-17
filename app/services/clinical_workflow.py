@@ -160,6 +160,18 @@ class ClinicalAnalysisService:
         intake = self.inspect_recording(Path(recording.file_path), clinician_mode=False, enforce_validation=True)
         if not self.config.resolved_checkpoint_paths(self.project_root):
             try:
+                return self._run_checkpoint_pkl_fallback(case_id=case_id, recording=recording, intake=intake)
+            except (CheckpointUnavailableError, CheckpointPredictionError):
+                logger.info(
+                    "Checkpoint PKL fallback unavailable, switching to benchmark fallback",
+                    extra={
+                        "event": "checkpoint_pkl_unavailable",
+                        "case_id": case_id,
+                        "recording_id": recording.recording_id,
+                        "status": "FALLBACK",
+                    },
+                )
+            try:
                 return self._run_benchmark_fallback(case_id=case_id, recording=recording, intake=intake)
             except Exception as exc:
                 logger.exception(
@@ -202,6 +214,18 @@ class ClinicalAnalysisService:
             )
         except (ModelUnavailableError, CheckpointInvalidError, AnalysisExecutionError) as exc:
             if isinstance(exc, ModelUnavailableError):
+                try:
+                    return self._run_checkpoint_pkl_fallback(case_id=case_id, recording=recording, intake=intake)
+                except (CheckpointUnavailableError, CheckpointPredictionError):
+                    logger.info(
+                        "Checkpoint PKL fallback unavailable, trying benchmark fallback",
+                        extra={
+                            "event": "checkpoint_pkl_unavailable",
+                            "case_id": case_id,
+                            "recording_id": recording.recording_id,
+                            "status": "FALLBACK",
+                        },
+                    )
                 try:
                     return self._run_benchmark_fallback(case_id=case_id, recording=recording, intake=intake)
                 except Exception:

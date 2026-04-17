@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: seizure-prediction-backend
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_LOG_LEVEL
+        value: INFO
+      - key: SEIZURE_MODEL_DEVICE
+        value: cpu
+

@@ -33,3 +33,7 @@ uploads/
 
 .env
 *.env
+
+# Large local model artifacts (keep local or in object storage, not in GitHub)
+LOSO_Models_Final/
+UNIVERSAL_LOPO_MODELS/

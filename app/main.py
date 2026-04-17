@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from app.schemas import ErrorResponse
 from app.services.clinical_workflow import ClinicalAnalysisService
 from app.services.inference import SeizureInferenceService
 from app.services.legacy_joblib import LegacyJoblibPredictionService
+from app.services.postgres_store import PostgresClinicalCaseStore
 from app.services.replay import ReplaySessionService
 from app.services.store import ClinicalCaseStore
 
@@ -29,7 +31,7 @@ PROJECT_ROOT = BASE_DIR.parent
 def create_app(
     *,
     config=runtime_config,
-    case_store: ClinicalCaseStore | None = None,
+    case_store: ClinicalCaseStore | PostgresClinicalCaseStore | None = None,
     inference_service: SeizureInferenceService | None = None,
     workflow_service: ClinicalAnalysisService | None = None,
     replay_service: ReplaySessionService | None = None,
@@ -50,7 +52,10 @@ def create_app(
         config=config,
     )
     resolved_legacy_service = LegacyJoblibPredictionService(project_root=PROJECT_ROOT)
-    resolved_case_store = case_store or ClinicalCaseStore(database_file)
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    resolved_case_store = case_store or (
+        PostgresClinicalCaseStore(database_url) if database_url else ClinicalCaseStore(database_file)
+    )
     resolved_replay_service = replay_service or ReplaySessionService(project_root=PROJECT_ROOT, config=config)
     templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 

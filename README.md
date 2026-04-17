@@ -128,6 +128,18 @@ Open:
 - `http://127.0.0.1:8000/demo`
 - `http://127.0.0.1:8000/replay`
 
+## Supabase + Vercel deployment
+
+1. Set `DATABASE_URL` to your Supabase Postgres connection string.
+2. Push this repository to GitHub (without large local model folders).
+3. Import the repo in Vercel and deploy with the included `vercel.json`.
+4. Add required environment variables in Vercel Project Settings:
+   - `DATABASE_URL`
+   - all required `SEIZURE_*` variables for your runtime.
+
+When `DATABASE_URL` is present, the app uses Supabase Postgres automatically.
+Without `DATABASE_URL`, it falls back to local SQLite.
+
 ## Notes
 
 - This app is for benchmarking/research workflow support, not clinical deployment.

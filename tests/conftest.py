@@ -532,12 +532,12 @@ def build_test_app(
     recording_mode: str = "referential",
     segment_count: int = 3,
 ):
+    runtime_config.auth_enabled = False
     case_store = ClinicalCaseStore(tmp_path / "clinical_cases.db")
     inference_service = FakeInferenceService(
         tmp_path,
         status="model_unavailable" if fail_analysis else "model_ready",
     )
-    replay_service = FakeReplayService()
     workflow_service = FakeWorkflowService(
         tmp_path,
         fail_analysis=fail_analysis,
@@ -549,7 +549,6 @@ def build_test_app(
         case_store=case_store,
         inference_service=inference_service,  # type: ignore[arg-type]
         workflow_service=workflow_service,  # type: ignore[arg-type]
-        replay_service=replay_service,  # type: ignore[arg-type]
     )
     uploads_dir = tmp_path / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)

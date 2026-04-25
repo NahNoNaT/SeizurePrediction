@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.dependencies import get_case_store
+from app.dependencies import get_case_store, require_page_role
 from app.web import page_context
 
 router = APIRouter()
@@ -16,6 +16,9 @@ async def root() -> RedirectResponse:
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:
+    _, redirect = require_page_role(request, "viewer", "clinician", "admin")
+    if redirect is not None:
+        return redirect
     case_store = get_case_store(request)
     templates = request.app.state.templates
     return templates.TemplateResponse(

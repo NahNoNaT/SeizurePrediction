@@ -35,6 +35,14 @@ def _get_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return items or default
 
 
+def _get_str(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    resolved = value.strip()
+    return resolved if resolved else default
+
+
 STANDARD_MODEL_CHANNEL_ORDER = (
     "Fp1",
     "Fp2",
@@ -121,6 +129,10 @@ class RuntimeConfig(BaseModel):
     research_disclaimer: str = (
         "This platform supports clinician review and does not replace professional medical diagnosis."
     )
+    auth_enabled: bool = _get_bool("SEIZURE_AUTH_ENABLED", True)
+    allow_public_registration: bool = _get_bool("SEIZURE_ALLOW_PUBLIC_REGISTRATION", False)
+    session_secret_key: str = _get_str("SEIZURE_SESSION_SECRET", "change-me-in-production")
+    session_https_only: bool = _get_bool("SEIZURE_SESSION_HTTPS_ONLY", False)
     log_level: str = os.getenv("APP_LOG_LEVEL", "INFO")
 
     @property

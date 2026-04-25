@@ -10,16 +10,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import configure_logging, runtime_config
-from app.routers import admin, analyses, cases, demo, pages, recordings, replay, reports
+from app.routers import admin, analyses, auth, cases, pages, recordings, reports
 from app.schemas import ErrorResponse
 from app.services.clinical_workflow import ClinicalAnalysisService
 from app.services.inference import SeizureInferenceService
 from app.services.legacy_joblib import LegacyJoblibPredictionService
-from app.services.postgres_store import PostgresClinicalCaseStore
-from app.services.replay import ReplaySessionService
 from app.services.store import ClinicalCaseStore
+
+try:
+    from app.services.postgres_store import PostgresClinicalCaseStore
+except ModuleNotFoundError:  # pragma: no cover - optional in local/test installs
+    PostgresClinicalCaseStore = None  # type: ignore[assignment]
 
 configure_logging(runtime_config.log_level)
 logger = logging.getLogger(__name__)
@@ -31,10 +35,9 @@ PROJECT_ROOT = BASE_DIR.parent
 def create_app(
     *,
     config=runtime_config,
-    case_store: ClinicalCaseStore | PostgresClinicalCaseStore | None = None,
+    case_store: ClinicalCaseStore | None = None,
     inference_service: SeizureInferenceService | None = None,
     workflow_service: ClinicalAnalysisService | None = None,
-    replay_service: ReplaySessionService | None = None,
 ) -> FastAPI:
     uploads_dir = config.uploads_directory(PROJECT_ROOT)
     data_dir = config.data_directory(PROJECT_ROOT)
@@ -53,10 +56,14 @@ def create_app(
     )
     resolved_legacy_service = LegacyJoblibPredictionService(project_root=PROJECT_ROOT)
     database_url = os.getenv("DATABASE_URL", "").strip()
-    resolved_case_store = case_store or (
-        PostgresClinicalCaseStore(database_url) if database_url else ClinicalCaseStore(database_file)
-    )
-    resolved_replay_service = replay_service or ReplaySessionService(project_root=PROJECT_ROOT, config=config)
+    if case_store is not None:
+        resolved_case_store = case_store
+    elif database_url:
+        if PostgresClinicalCaseStore is None:
+            raise RuntimeError("DATABASE_URL is set but psycopg is not installed. Install requirements first.")
+        resolved_case_store = PostgresClinicalCaseStore(database_url)
+    else:
+        resolved_case_store = ClinicalCaseStore(database_file)
     templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
     @asynccontextmanager
@@ -69,6 +76,12 @@ def create_app(
         yield
 
     app = FastAPI(title=config.app_title, version="2.0.0", lifespan=lifespan)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=config.session_secret_key,
+        https_only=config.session_https_only,
+        same_site="lax",
+    )
     app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
     app.state.runtime_config = config
@@ -80,7 +93,6 @@ def create_app(
     app.state.inference_service = resolved_inference_service
     app.state.legacy_joblib_service = resolved_legacy_service
     app.state.workflow_service = resolved_workflow_service
-    app.state.replay_service = resolved_replay_service
     app.state.templates = templates
 
     @app.exception_handler(RequestValidationError)
@@ -101,7 +113,15 @@ def create_app(
         payload = ErrorResponse(code="server_error", detail=f"Unexpected server error: {exc}")
         return JSONResponse(status_code=500, content=payload.model_dump())
 
-    for router in (pages.router, cases.router, recordings.router, analyses.router, reports.router, admin.router, demo.router, replay.router):
+    for router in (
+        auth.router,
+        pages.router,
+        cases.router,
+        recordings.router,
+        analyses.router,
+        reports.router,
+        admin.router,
+    ):
         app.include_router(router)
 
     return app

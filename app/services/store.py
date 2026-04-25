@@ -157,6 +157,15 @@ class ClinicalCaseStore:
                     is_primary INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(analysis_id) REFERENCES clinical_analyses(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS app_users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    full_name TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_column(connection, "recordings", "missing_channels_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -419,6 +428,58 @@ class ClinicalCaseStore:
         with self._connect() as connection:
             cursor = connection.execute("DELETE FROM clinical_cases WHERE id = ?", (case_id,))
             return cursor.rowcount > 0
+
+    def count_users(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT COUNT(*) AS value FROM app_users").fetchone()
+            return int(row["value"]) if row is not None else 0
+
+    def create_user(
+        self,
+        *,
+        user_id: str,
+        username: str,
+        full_name: str,
+        password_hash: str,
+        role: str,
+        created_at: datetime,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_users (id, username, full_name, password_hash, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    username,
+                    full_name,
+                    password_hash,
+                    role,
+                    created_at.isoformat(),
+                ),
+            )
+
+    def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, username, full_name, password_hash, role, created_at
+                FROM app_users
+                WHERE username = ?
+                """,
+                (username,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "full_name": row["full_name"],
+            "password_hash": row["password_hash"],
+            "role": row["role"],
+            "created_at": row["created_at"],
+        }
 
     def dashboard_stats(self) -> DashboardStats:
         with self._connect() as connection:

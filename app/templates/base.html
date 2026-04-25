@@ -40,14 +40,12 @@
                     <span class="nav-link-title">Reports</span>
                     <small>Saved summaries</small>
                 </a>
-                <a href="/replay" class="nav-link{% if active_page == 'replay' %} is-active{% endif %}">
-                    <span class="nav-link-title">EDF Replay</span>
-                    <small>Live legacy model stream</small>
+                {% if current_user and current_user.role == 'admin' %}
+                <a href="/admin" class="nav-link{% if active_page == 'admin' %} is-active{% endif %}">
+                    <span class="nav-link-title">Admin</span>
+                    <small>System settings</small>
                 </a>
-                <a href="/demo" class="nav-link{% if active_page == 'demo' %} is-active{% endif %}">
-                    <span class="nav-link-title">EDF Benchmark</span>
-                    <small>Benchmark demo</small>
-                </a>
+                {% endif %}
             </nav>
 
             <section class="sidebar-panel">
@@ -71,12 +69,18 @@
                     <p class="eyebrow">{{ app_title }}</p>
                     <h1>{{ page_title }}</h1>
                     <p class="page-subtitle">{{ page_subtitle }}</p>
+                    {% if current_user %}
+                    <p class="page-subtitle">Signed in as {{ current_user.full_name }} ({{ current_user.role }})</p>
+                    {% endif %}
                 </div>
                 <div class="topbar-actions">
-                    <a class="button button-secondary" href="/replay">Open Replay</a>
-                    <a class="button button-secondary" href="/demo">Open Benchmark</a>
                     <a class="button button-secondary" href="/cases">Open Cases</a>
                     <a class="button button-primary" href="/cases/new">Start New Analysis</a>
+                    {% if auth_enabled %}
+                    <form method="post" action="/auth/logout">
+                        <button class="button button-secondary" type="submit">Sign Out</button>
+                    </form>
+                    {% endif %}
                 </div>
             </header>
 

@@ -12,27 +12,10 @@ Hugging Face model wrappers were removed from active usage.
 
 ## Main routes
 
-- `GET /demo`
-- `GET /health`
-- `POST /predict`
-- `GET /legacy/health`
-- `POST /legacy/predict`
-- `GET /replay`
-
-## Model source and selection
-
-The backend discovers models recursively:
-
-- `UNIVERSAL_LOPO_MODELS/<FEATURE_SET>/*.joblib`
-- `LOSO_Models_Final/<SUBJECT_ID>/<FEATURE_SET>/*.joblib`
-
-Supported feature sets:
-
-- `LBP`
-- `GLCM`
-- `COMBINED`
-
-For exact `model_id`, call `GET /legacy/health`.
+- `GET /dashboard`
+- `GET /cases`
+- `GET /reports`
+- `GET /api/health`
 
 ## Feature extractor integration
 
@@ -54,30 +37,6 @@ Contract:
 ```python
 extract(prepared_segment=..., feature_set=..., edf_path=...) -> np.ndarray
 ```
-
-## Full-file scan mode
-
-`POST /legacy/predict` supports scanning the full recording in one request:
-
-- `scan_full_file=true`
-- `scan_window_sec`
-- `scan_hop_sec`
-- `scan_start_sec`
-- `scan_end_sec`
-- `scan_max_windows`
-
-Response includes:
-
-- `scan.timeline` (window-by-window risk)
-- `scan.peak_window` (highest-risk window + model details)
-
-## Replay mode
-
-`/replay` uploads one EDF and streams sliding-window risk from a configured legacy model.
-
-Optional env:
-
-- `SEIZURE_REPLAY_LEGACY_MODEL_ID` (default: `universal:dt:combined`)
 
 ## Benchmark fallback tuning
 
@@ -125,8 +84,40 @@ uvicorn app.main:app --reload
 
 Open:
 
-- `http://127.0.0.1:8000/demo`
-- `http://127.0.0.1:8000/replay`
+- `http://127.0.0.1:8000/dashboard`
+- `http://127.0.0.1:8000/auth/login`
+
+## Authentication and roles
+
+Authentication is enabled by default.
+
+1. Open `http://127.0.0.1:8000/auth/register` to create the first account.
+2. The very first account is created with role `admin`.
+3. Sign in at `http://127.0.0.1:8000/auth/login`.
+
+Role model:
+
+- `viewer`: read-only access to dashboard/cases/reports and read APIs.
+- `clinician`: all viewer permissions + create/upload/analyze/generate report.
+- `admin`: all clinician permissions + admin page/checkpoint updates + case deletion + user creation.
+
+Environment variables:
+
+- `SEIZURE_AUTH_ENABLED=true|false` (default: `true`)
+- `SEIZURE_ALLOW_PUBLIC_REGISTRATION=true|false` (default: `false`)
+- `SEIZURE_SESSION_SECRET=<strong-random-secret>`
+- `SEIZURE_SESSION_HTTPS_ONLY=true|false` (default: `false`, set `true` behind HTTPS)
+
+Registration policy:
+
+- When `SEIZURE_ALLOW_PUBLIC_REGISTRATION=false`, only the first account can self-register, then only admins can create users.
+- When `SEIZURE_ALLOW_PUBLIC_REGISTRATION=true`, new visitors can self-register and are assigned role `viewer` by default.
+
+Limitations:
+
+- No password reset flow yet.
+- No email verification flow.
+- Session-based login; if the secret changes, all active sessions are invalidated.
 
 ## Supabase + Vercel deployment
 

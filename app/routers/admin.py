@@ -6,7 +6,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 
 from app.config import runtime_config
-from app.dependencies import get_inference_service
+from app.dependencies import get_inference_service, require_api_role, require_page_role
 from app.schemas import AdminSettingsSummary, AppMetadataResponse
 from app.web import build_redirect, page_context
 
@@ -15,6 +15,9 @@ router = APIRouter()
 
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request) -> HTMLResponse:
+    _, redirect = require_page_role(request, "admin")
+    if redirect is not None:
+        return redirect
     templates = request.app.state.templates
     project_root = request.app.state.project_root
     configured_paths = list(runtime_config.configured_checkpoint_paths(project_root))
@@ -56,6 +59,7 @@ async def admin_page(request: Request) -> HTMLResponse:
 
 @router.post("/admin/checkpoint")
 async def admin_update_checkpoint(request: Request, checkpoint_paths: str = Form(...)):
+    require_api_role(request, "admin")
     inference_service = get_inference_service(request)
     try:
         parsed_paths = [value.strip() for value in re.split(r"[\r\n,;]+", checkpoint_paths) if value.strip()]
@@ -80,6 +84,7 @@ async def health() -> dict[str, str]:
 
 @router.get("/api/model/info", response_model=AppMetadataResponse)
 async def model_info(request: Request) -> AppMetadataResponse:
+    require_api_role(request, "admin")
     return AppMetadataResponse(
         app_title=runtime_config.app_title,
         app_subtitle=runtime_config.app_subtitle,

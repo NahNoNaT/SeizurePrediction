@@ -45,6 +45,12 @@ def page_context(
     extra: dict | None = None,
 ) -> dict:
     config: RuntimeConfig = request.app.state.runtime_config
+    session_user = request.session.get("user") if config.auth_enabled else {
+        "username": "local-dev",
+        "full_name": "Local Dev",
+        "role": "admin",
+    }
+    current_user = session_user if isinstance(session_user, dict) else None
     context = {
         "request": request,
         "app_title": config.app_title,
@@ -56,6 +62,8 @@ def page_context(
         "notice": request.query_params.get("notice"),
         "tone": request.query_params.get("tone", "info"),
         "current_year": datetime.now().year,
+        "auth_enabled": config.auth_enabled,
+        "current_user": current_user,
     }
     if extra:
         context.update(extra)

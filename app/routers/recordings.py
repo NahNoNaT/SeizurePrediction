@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 
 from app.config import runtime_config
-from app.dependencies import get_case_store, get_workflow_service
+from app.dependencies import get_case_store, get_workflow_service, require_api_role
 from app.schemas import CreateRecordingResponse, RecordingOverview, RecordingPreviewResponse
 from app.services.errors import EEGValidationError
 from app.web import app_http_exception, save_upload
@@ -20,6 +20,7 @@ router = APIRouter()
 
 @router.post("/api/cases/{case_id}/recordings", response_model=CreateRecordingResponse, status_code=201)
 async def api_upload_recording(request: Request, case_id: str, eeg_file: UploadFile = File(...)) -> CreateRecordingResponse:
+    require_api_role(request, "clinician", "admin")
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
     if case_store.get_case_detail(case_id) is None:
@@ -71,6 +72,7 @@ async def api_upload_recording(request: Request, case_id: str, eeg_file: UploadF
 
 @router.get("/api/recordings/{recording_id}", response_model=RecordingOverview)
 async def api_recording_detail(request: Request, recording_id: str) -> RecordingOverview:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     recording = case_store.get_recording(recording_id)
     if recording is None:
@@ -86,6 +88,7 @@ async def api_recording_preview(
     duration_sec: float = Query(default=30.0),
     channels: str = Query(default=""),
 ) -> RecordingPreviewResponse:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
     recording = case_store.get_recording(recording_id)

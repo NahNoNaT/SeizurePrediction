@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+</head>
+<body>
+    <main class="content" style="max-width: 560px; margin: 48px auto;">
+        <h1>Register</h1>
+        <p>Create a user account for platform access.</p>
+
+        {% if notice %}
+        <div class="alert alert-{{ tone }}">
+            <span>{{ notice }}</span>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/auth/register" class="form-card">
+            <label for="full_name">Full name</label>
+            <input id="full_name" name="full_name" type="text" required>
+
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" minlength="3" required autocomplete="username">
+
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" minlength="8" required autocomplete="new-password">
+
+            {% if allow_role_select %}
+            <label for="role">Role</label>
+            <select id="role" name="role">
+                <option value="viewer" {% if default_role == 'viewer' %}selected{% endif %}>Viewer</option>
+                <option value="clinician" {% if default_role == 'clinician' %}selected{% endif %}>Clinician</option>
+                <option value="admin" {% if default_role == 'admin' %}selected{% endif %}>Admin</option>
+            </select>
+            {% else %}
+            <input type="hidden" name="role" value="{{ default_role }}">
+            {% endif %}
+
+            <button class="button button-primary" type="submit">Create Account</button>
+        </form>
+
+        <p style="margin-top: 12px;">
+            Already have an account?
+            <a href="/auth/login">Sign in</a>
+        </p>
+    </main>
+</body>
+</html>

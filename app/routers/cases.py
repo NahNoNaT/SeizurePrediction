@@ -9,7 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import runtime_config
-from app.dependencies import get_case_store, get_workflow_service
+from app.dependencies import get_case_store, get_workflow_service, require_api_role, require_page_role
 from app.schemas import CaseCreateRequest, CaseDetail, CaseSummary, CreateCaseResponse, DeleteCaseResponse
 from app.services.errors import EEGValidationError
 from app.web import (
@@ -39,6 +39,9 @@ async def cases_page(
     date_from: str = Query(default=""),
     date_to: str = Query(default=""),
 ) -> HTMLResponse:
+    _, redirect = require_page_role(request, "viewer", "clinician", "admin")
+    if redirect is not None:
+        return redirect
     templates = request.app.state.templates
     case_store = get_case_store(request)
     cases = case_store.list_cases(search=search, risk=risk, date_from=date_from, date_to=date_to)
@@ -57,6 +60,9 @@ async def cases_page(
 
 @router.get("/cases/new", response_class=HTMLResponse)
 async def new_analysis_page(request: Request) -> HTMLResponse:
+    _, redirect = require_page_role(request, "clinician", "admin")
+    if redirect is not None:
+        return redirect
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request=request,
@@ -80,6 +86,9 @@ async def create_case_and_run_analysis(
     notes: str = Form(default=""),
     eeg_file: UploadFile = File(...),
 ) -> RedirectResponse:
+    _, redirect = require_page_role(request, "clinician", "admin")
+    if redirect is not None:
+        return redirect
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
     case_id = str(uuid4())
@@ -170,6 +179,9 @@ async def create_case_and_run_analysis(
 
 @router.get("/cases/{case_id}", response_class=HTMLResponse)
 async def case_detail_page(request: Request, case_id: str) -> HTMLResponse:
+    _, redirect = require_page_role(request, "viewer", "clinician", "admin")
+    if redirect is not None:
+        return redirect
     templates = request.app.state.templates
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
@@ -208,6 +220,9 @@ async def case_detail_page(request: Request, case_id: str) -> HTMLResponse:
 
 @router.post("/cases/{case_id}/delete")
 async def delete_case_page(request: Request, case_id: str) -> RedirectResponse:
+    _, redirect = require_page_role(request, "admin")
+    if redirect is not None:
+        return redirect
     case_store = get_case_store(request)
     deleted = case_store.delete_case(case_id)
     if not deleted:
@@ -217,6 +232,7 @@ async def delete_case_page(request: Request, case_id: str) -> RedirectResponse:
 
 @router.post("/api/cases", response_model=CreateCaseResponse, status_code=201)
 async def api_create_case(request: Request, payload: CaseCreateRequest) -> CreateCaseResponse:
+    require_api_role(request, "clinician", "admin")
     case_store = get_case_store(request)
     created_at = datetime.now(timezone.utc)
     case_id = str(uuid4())
@@ -243,12 +259,14 @@ async def api_list_cases(
     date_from: str = Query(default=""),
     date_to: str = Query(default=""),
 ) -> list[CaseSummary]:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     return case_store.list_cases(search=search, risk=risk, date_from=date_from, date_to=date_to)
 
 
 @router.get("/api/cases/{case_id}", response_model=CaseDetail)
 async def api_case_detail(request: Request, case_id: str) -> CaseDetail:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     detail = case_store.get_case_detail(case_id)
     if detail is None:
@@ -258,6 +276,7 @@ async def api_case_detail(request: Request, case_id: str) -> CaseDetail:
 
 @router.delete("/api/cases/{case_id}", response_model=DeleteCaseResponse)
 async def api_delete_case(request: Request, case_id: str) -> DeleteCaseResponse:
+    require_api_role(request, "admin")
     case_store = get_case_store(request)
     if not case_store.delete_case(case_id):
         raise app_http_exception(404, "case_not_found", "Case not found.")

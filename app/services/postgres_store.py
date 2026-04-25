@@ -156,6 +156,15 @@ class PostgresClinicalCaseStore:
                     is_primary INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(analysis_id) REFERENCES clinical_analyses(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS app_users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    full_name TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL
+                );
             """
             for statement in schema_sql.split(";"):
                 sql = statement.strip()
@@ -421,6 +430,42 @@ class PostgresClinicalCaseStore:
         with self._connect() as connection:
             cursor = connection.execute("DELETE FROM clinical_cases WHERE id = %s", (case_id,))
             return cursor.rowcount > 0
+
+    def count_users(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT COUNT(*) AS value FROM app_users").fetchone()
+            return int(row["value"]) if row is not None else 0
+
+    def create_user(
+        self,
+        *,
+        user_id: str,
+        username: str,
+        full_name: str,
+        password_hash: str,
+        role: str,
+        created_at: datetime,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_users (id, username, full_name, password_hash, role, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (user_id, username, full_name, password_hash, role, created_at),
+            )
+
+    def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, username, full_name, password_hash, role, created_at
+                FROM app_users
+                WHERE username = %s
+                """,
+                (username,),
+            ).fetchone()
+        return row if row is not None else None
 
     def dashboard_stats(self) -> DashboardStats:
         with self._connect() as connection:

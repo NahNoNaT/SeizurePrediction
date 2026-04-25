@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
-from app.dependencies import get_case_store, get_workflow_service
+from app.dependencies import get_case_store, get_workflow_service, require_api_role, require_page_role
 from app.schemas import GenerateReportResponse, ReportDetailResponse
 from app.web import app_http_exception, build_case_summary, format_duration_label, page_context
 
@@ -15,6 +15,9 @@ router = APIRouter()
 
 @router.get("/reports", response_class=HTMLResponse)
 async def reports_page(request: Request) -> HTMLResponse:
+    _, redirect = require_page_role(request, "viewer", "clinician", "admin")
+    if redirect is not None:
+        return redirect
     templates = request.app.state.templates
     case_store = get_case_store(request)
     return templates.TemplateResponse(
@@ -32,6 +35,9 @@ async def reports_page(request: Request) -> HTMLResponse:
 
 @router.get("/reports/{report_id}", response_class=HTMLResponse)
 async def report_view_page(request: Request, report_id: str) -> HTMLResponse:
+    _, redirect = require_page_role(request, "viewer", "clinician", "admin")
+    if redirect is not None:
+        return redirect
     templates = request.app.state.templates
     case_store = get_case_store(request)
     report = case_store.get_report(report_id)
@@ -59,6 +65,7 @@ async def report_view_page(request: Request, report_id: str) -> HTMLResponse:
 
 @router.get("/reports/{report_id}/download")
 async def report_download(request: Request, report_id: str) -> FileResponse:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     report = case_store.get_report(report_id)
     if report is None:
@@ -71,6 +78,7 @@ async def report_download(request: Request, report_id: str) -> FileResponse:
 
 @router.post("/api/analyses/{analysis_id}/report", response_model=GenerateReportResponse)
 async def api_generate_report(request: Request, analysis_id: str) -> GenerateReportResponse:
+    require_api_role(request, "clinician", "admin")
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
     detail = case_store.get_analysis_detail(analysis_id)
@@ -85,6 +93,7 @@ async def api_generate_report(request: Request, analysis_id: str) -> GenerateRep
 
 @router.get("/api/reports/{report_id}", response_model=ReportDetailResponse)
 async def api_report_detail(request: Request, report_id: str) -> ReportDetailResponse:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     report = case_store.get_report(report_id)
     if report is None:

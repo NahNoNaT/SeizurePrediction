@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Request
 
-from app.dependencies import get_case_store, get_workflow_service
+from app.dependencies import get_case_store, get_workflow_service, require_api_role
 from app.schemas import AnalysisStateResponse, CaseAnalysesResponse
 from app.web import app_http_exception
 from app.workflow_helpers import persist_analysis_bundle
@@ -16,6 +16,7 @@ router = APIRouter()
 
 @router.post("/api/recordings/{recording_id}/analyze", response_model=AnalysisStateResponse)
 async def api_analyze_recording(request: Request, recording_id: str) -> AnalysisStateResponse:
+    require_api_role(request, "clinician", "admin")
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
     recording = case_store.get_recording(recording_id)
@@ -45,6 +46,7 @@ async def api_analyze_recording(request: Request, recording_id: str) -> Analysis
 
 @router.get("/api/analyses/{analysis_id}", response_model=AnalysisStateResponse)
 async def api_analysis_detail(request: Request, analysis_id: str) -> AnalysisStateResponse:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
     detail = case_store.get_analysis_detail(analysis_id)
@@ -55,6 +57,7 @@ async def api_analysis_detail(request: Request, analysis_id: str) -> AnalysisSta
 
 @router.get("/api/cases/{case_id}/analysis", response_model=AnalysisStateResponse)
 async def api_case_analysis_state(request: Request, case_id: str) -> AnalysisStateResponse:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     workflow_service = get_workflow_service(request)
     detail = case_store.get_case_detail(case_id)
@@ -67,6 +70,7 @@ async def api_case_analysis_state(request: Request, case_id: str) -> AnalysisSta
 
 @router.get("/api/cases/{case_id}/analyses", response_model=CaseAnalysesResponse)
 async def api_case_analyses(request: Request, case_id: str) -> CaseAnalysesResponse:
+    require_api_role(request, "viewer", "clinician", "admin")
     case_store = get_case_store(request)
     detail = case_store.get_case_detail(case_id)
     if detail is None:

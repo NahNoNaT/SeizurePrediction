@@ -250,6 +250,10 @@ textarea {
     gap: 12px;
 }
 
+.topbar-actions form {
+    margin: 0;
+}
+
 .grid-cards {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

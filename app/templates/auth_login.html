@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+</head>
+<body>
+    <main class="content" style="max-width: 520px; margin: 48px auto;">
+        <h1>Sign In</h1>
+        <p>Use your account to access the clinical dashboard.</p>
+
+        {% if notice %}
+        <div class="alert alert-{{ tone }}">
+            <span>{{ notice }}</span>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/auth/login" class="form-card">
+            <input type="hidden" name="next_path" value="{{ next_path }}">
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" required autocomplete="username">
+
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" required autocomplete="current-password">
+
+            <button class="button button-primary" type="submit">Sign In</button>
+        </form>
+
+        {% if can_self_register %}
+        <p style="margin-top: 12px;">
+            Need an account?
+            <a href="/auth/register">Register</a>
+        </p>
+        {% else %}
+        <p style="margin-top: 12px;">Need an account? Please contact your administrator.</p>
+        {% endif %}
+    </main>
+</body>
+</html>

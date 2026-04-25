@@ -30,8 +30,7 @@ class PostgresClinicalCaseStore:
 
     def initialize(self) -> None:
         with self._connect() as connection:
-            connection.execute(
-                """
+            schema_sql = """
                 CREATE TABLE IF NOT EXISTS clinical_cases (
                     id TEXT PRIMARY KEY,
                     patient_id TEXT NOT NULL,
@@ -157,8 +156,11 @@ class PostgresClinicalCaseStore:
                     is_primary INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(analysis_id) REFERENCES clinical_analyses(id) ON DELETE CASCADE
                 );
-                """
-            )
+            """
+            for statement in schema_sql.split(";"):
+                sql = statement.strip()
+                if sql:
+                    connection.execute(sql)
             self._ensure_column(connection, "recordings", "missing_channels_json", "JSONB NOT NULL DEFAULT '[]'::jsonb")
             self._ensure_column(connection, "recordings", "input_montage_type", "TEXT NOT NULL DEFAULT 'unsupported'")
             self._ensure_column(connection, "recordings", "conversion_status", "TEXT NOT NULL DEFAULT 'blocked'")

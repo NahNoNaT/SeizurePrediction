@@ -7,10 +7,17 @@ services:
     autoDeploy: true
     healthCheckPath: /health
     envVars:
+      # ⚠️ REQUIRED: Set DATABASE_URL in Render dashboard BEFORE deploying
+      # Get it from: Supabase → Settings → Database → Connection pooler
+      # Format: postgresql://user:password@host:port/dbname?sslmode=require
       - key: DATABASE_URL
-        sync: false
+        sync: false  # Must be set manually in Render dashboard, not from .env
+      
+      # Optional: Log level (DEBUG, INFO, WARNING, ERROR)
       - key: APP_LOG_LEVEL
         value: INFO
+      
+      # Must use CPU on free tier (GPU not available)
       - key: SEIZURE_MODEL_DEVICE
         value: cpu
 

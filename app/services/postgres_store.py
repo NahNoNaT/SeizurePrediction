@@ -26,6 +26,20 @@ from app.schemas import (
 
 class PostgresClinicalCaseStore:
     def __init__(self, database_url: str):
+        if not database_url or not database_url.strip():
+            raise ValueError(
+                "DATABASE_URL is empty or not set. "
+                "Please set DATABASE_URL environment variable with a valid PostgreSQL connection string. "
+                "Example: postgresql://user:password@host:5432/dbname?sslmode=require"
+            )
+        
+        # Validate that it looks like a database URL
+        if not database_url.startswith(("postgresql://", "postgres://", "postgresql+psycopg://", "postgresql+psycopg2://")):
+            raise ValueError(
+                f"DATABASE_URL does not appear to be a valid PostgreSQL connection string. "
+                f"It should start with 'postgresql://' or similar. Got: {database_url[:50]}..."
+            )
+        
         self.database_url = database_url
 
     def initialize(self) -> None:
